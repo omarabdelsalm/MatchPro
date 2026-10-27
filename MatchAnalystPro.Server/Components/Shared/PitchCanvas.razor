@@ -1,0 +1,104 @@
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<div class="pitch-wrapper" style="position:relative; width:@Width; height:@Height; user-select:none;">
+    <canvas id="@CanvasId" width="@WidthPx" height="@HeightPx"
+            style="width:100%; height:100%; border-radius:8px; cursor:@(ReadOnly ? "default" : "crosshair"); display:block;">
+    </canvas>
+    @if (!string.IsNullOrEmpty(Hint))
+    {
+        <div class="pitch-hint" style="position:absolute; bottom:8px; left:8px;
+             background:rgba(0,0,0,0.75); color:#fff; padding:4px 12px;
+             border-radius:4px; font-size:11px; pointer-events:none; border:1px solid rgba(255,255,255,0.15);">
+            @Hint
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public string CanvasId { get; set; } = "pitch_" + Guid.NewGuid().ToString("N");
+    [Parameter] public string Width { get; set; } = "100%";
+    [Parameter] public string Height { get; set; } = "auto";
+    [Parameter] public int WidthPx { get; set; } = 800;
+    [Parameter] public int HeightPx { get; set; } = 520;
+    [Parameter] public string Hint { get; set; } = "انقر على الملعب لإضافة إحداثي";
+    [Parameter] public List<Marker> Markers { get; set; } = new();
+    [Parameter] public List<PitchEventModel> Events { get; set; } = new();
+    [Parameter] public EventCallback<(double X, double Y)> OnPointSelected { get; set; }
+    [Parameter] public EventCallback<(double X, double Y)> OnClick { get; set; }
+    [Parameter] public bool ReadOnly { get; set; } = false;
+
+    private DotNetObjectReference<PitchCanvas>? _ref;
+
+    public record Marker(double X, double Y, double? EndX = null, double? EndY = null,
+                        string Color = "#ff0000", double Radius = 6, string? Label = null);
+
+    public class PitchEventModel
+    {
+        public double X { get; set; }
+        public double Y { get; set; }
+        public double? EndX { get; set; }
+        public double? EndY { get; set; }
+        public string? Color { get; set; }
+        public string? Label { get; set; }
+        public double? Radius { get; set; }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        try
+        {
+            if (firstRender)
+            {
+                _ref = DotNetObjectReference.Create(this);
+                if (!ReadOnly)
+                    await JS.InvokeVoidAsync("InteractivePitch.init", CanvasId, _ref, "click");
+                else
+                    await JS.InvokeVoidAsync("InteractivePitch.init", CanvasId, null, "readonly");
+            }
+            await Redraw();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[PitchCanvas] error: {ex.Message}");
+        }
+    }
+
+    public async Task Redraw()
+    {
+        var markers = Markers.Select(m => new
+        {
+            x = m.X, y = m.Y, endX = m.EndX, endY = m.EndY,
+            color = m.Color, radius = m.Radius, label = m.Label
+        }).ToList();
+
+        // Also merge Events if provided
+        foreach (var ev in Events)
+        {
+            markers.Add(new
+            {
+                x = ev.X, y = ev.Y, endX = ev.EndX, endY = ev.EndY,
+                color = ev.Color ?? "#ff0000", radius = ev.Radius ?? 6, label = ev.Label
+            });
+        }
+
+        try
+        {
+            await JS.InvokeVoidAsync("InteractivePitch.redraw", CanvasId, markers);
+        }
+        catch { }
+    }
+
+    [JSInvokable]
+    public async Task OnPitchClick(double x, double y)
+    {
+        await OnClick.InvokeAsync((x, y));
+        await OnPointSelected.InvokeAsync((x, y));
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        _ref?.Dispose();
+        return ValueTask.CompletedTask;
+    }
+}

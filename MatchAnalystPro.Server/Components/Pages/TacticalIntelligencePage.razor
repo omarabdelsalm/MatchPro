@@ -1,0 +1,541 @@
+@page "/intelligence"
+@page "/intelligence/{MatchId:int}"
+@inject TacticalIntelligenceService IntelService
+@inject AppDbContext Db
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<div class="content-wrapper">
+    <!-- رأس الصفحة -->
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:12px;">
+        <div>
+            <div style="display:flex; align-items:center; gap:8px;">
+                <span style="font-size:24px;">🧠</span>
+                <h1 class="page-title" style="margin:0;">الذكاء التكتيكي — الخرائط الحية وتحليل SWOT</h1>
+            </div>
+            <p style="margin:4px 0 0 0; color:var(--text-muted); font-size:13px;">
+                محرك الذكاء التحليلي الشامل: شبكة التمريرات، التهديد المتوقع (xT)، الخريطة الحرارية، ومصفوفة SWOT
+            </p>
+        </div>
+
+        <div style="display:flex; gap:8px; align-items:center;">
+            <select @bind="MatchId" @bind:after="OnMatchChanged" style="background:#161b22; border:1px solid #30363d; color:#fff; padding:6px 12px; border-radius:6px; font-size:13px;">
+                @foreach (var m in _matches)
+                {
+                    <option value="@m.Id">@m.HomeTeam?.NameAr ضد @m.AwayTeam?.NameAr (@m.Date.ToString("yyyy-MM-dd"))</option>
+                }
+            </select>
+            <button type="button" class="primary" @onclick="PrintReport" style="padding:6px 14px; font-size:13px;">
+                📄 طباعة / تصدير التقرير الفني
+            </button>
+        </div>
+    </div>
+
+    @if (_report == null)
+    {
+        <div class="card" style="text-align:center; padding:40px;">
+            <p style="color:var(--text-muted);">جاري استخراج وتحليل البيانات التكتيكية للمباراة...</p>
+        </div>
+    }
+    else
+    {
+        <!-- شريط اختيار الفريق المراد تحليله -->
+        <div style="background:#161b22; border:1px solid #30363d; border-radius:8px; padding:12px 16px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+            <div style="display:flex; align-items:center; gap:10px;">
+                <span style="font-size:13px; color:var(--text-muted); font-weight:600;">الفريق قيد التحليل:</span>
+                <button type="button" class="@(_focusTeamId == _report.Match.HomeTeamId ? "primary" : "")" 
+                        style="padding:6px 16px; font-size:13px; font-weight:700;"
+                        @onclick="() => SwitchFocusTeam(_report.Match.HomeTeamId)">
+                    🏠 @_report.Match.HomeTeam?.NameAr (المضيف)
+                </button>
+                <button type="button" class="@(_focusTeamId == _report.Match.AwayTeamId ? "primary" : "")" 
+                        style="padding:6px 16px; font-size:13px; font-weight:700;"
+                        @onclick="() => SwitchFocusTeam(_report.Match.AwayTeamId)">
+                    ✈️ @_report.Match.AwayTeam?.NameAr (الضيف)
+                </button>
+            </div>
+
+            <div style="font-size:12px; color:var(--text-muted); display:flex; gap:14px;">
+                <span>البطولة: <strong style="color:#58a6ff;">@_report.Match.Competition</strong></span>
+                <span>الملعب: <strong style="color:#c9d1d9;">@_report.Match.Venue</strong></span>
+            </div>
+        </div>
+
+        <!-- ═══ لوحة المؤشرات التكتيكية المتقدمة (KPIs) ═══ -->
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(230px, 1fr)); gap:12px; margin-bottom:20px;">
+            <!-- xG Comparison -->
+            <div class="card" style="margin:0; border-left:4px solid #58a6ff;">
+                <div style="font-size:12px; color:var(--text-muted); margin-bottom:6px;">الأهداف المتوقعة (Expected Goals - xG)</div>
+                <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px;">
+                    <div style="font-size:26px; font-weight:800; color:#58a6ff;">@_report.FocusXg.ToString("F2")</div>
+                    <div style="font-size:13px; color:var(--text-muted);">ضد <span style="color:#f85149; font-weight:700;">@_report.OpponentXg.ToString("F2")</span></div>
+                </div>
+                <div style="height:6px; background:#21262d; border-radius:3px; overflow:hidden; display:flex;">
+                    <div style="height:100%; width:@(GetPercent(_report.FocusXg, _report.FocusXg + _report.OpponentXg))%; background:#58a6ff;"></div>
+                    <div style="height:100%; width:@(GetPercent(_report.OpponentXg, _report.FocusXg + _report.OpponentXg))%; background:#f85149;"></div>
+                </div>
+            </div>
+
+            <!-- Expected Threat (xT) -->
+            <div class="card" style="margin:0; border-left:4px solid #bc8cff;">
+                <div style="font-size:12px; color:var(--text-muted); margin-bottom:6px;">التهديد المتوقع من التدرج (xT)</div>
+                <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px;">
+                    <div style="font-size:26px; font-weight:800; color:#bc8cff;">@_report.FocusXt.ToString("F2")</div>
+                    <div style="font-size:13px; color:var(--text-muted);">ضد <span style="color:#8b949e; font-weight:700;">@_report.OpponentXt.ToString("F2")</span></div>
+                </div>
+                <div style="font-size:11px; color:var(--text-muted);">
+                    قيمة خطورة نقل الكرة بالتمريرات والمراوغات
+                </div>
+            </div>
+
+            <!-- Field Tilt -->
+            <div class="card" style="margin:0; border-left:4px solid #3fb950;">
+                <div style="font-size:12px; color:var(--text-muted); margin-bottom:6px;">ميل السيطرة الميدانية (Field Tilt)</div>
+                <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px;">
+                    <div style="font-size:26px; font-weight:800; color:#3fb950;">@_report.FocusFieldTilt%</div>
+                    <div style="font-size:12px; color:var(--text-muted);">الثلث الهجومي الأخير</div>
+                </div>
+                <div style="height:6px; background:#21262d; border-radius:3px; overflow:hidden; display:flex;">
+                    <div style="height:100%; width:@(_report.FocusFieldTilt)%; background:#3fb950;"></div>
+                    <div style="height:100%; width:@(_report.OpponentFieldTilt)%; background:#8b949e;"></div>
+                </div>
+            </div>
+
+            <!-- PPDA -->
+            <div class="card" style="margin:0; border-left:4px solid #d29922;">
+                <div style="font-size:12px; color:var(--text-muted); margin-bottom:6px;">مؤشر شراسة الضغط (PPDA)</div>
+                <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px;">
+                    <div style="font-size:26px; font-weight:800; color:#d29922;">@_report.FocusPpda.ToString("F1")</div>
+                    <div style="font-size:11px; padding:2px 8px; border-radius:12px; background:rgba(210, 153, 34, 0.2); color:#d29922;">
+                        @(_report.FocusPpda > 0 && _report.FocusPpda <= 10.5 ? "ضغط عالي خانق" : "كتلة دفاعية متوسطة")
+                    </div>
+                </div>
+                <div style="font-size:11px; color:var(--text-muted);">
+                    تمريرات الخصم قبل كل تدخل دفاعي لفريقنا
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══ لوحة الخرائط التكتيكية التفاعلية (Pass Network, Heatmap, Shot Map) ═══ -->
+        <div class="card" style="margin-bottom:20px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; flex-wrap:wrap; gap:10px;">
+                <div>
+                    <h3 class="card-title" style="margin:0; border:none; padding:0;">🗺️ الخرائط التكتيكية الميدانية لفريق @_report.FocusTeam.NameAr</h3>
+                    <span style="font-size:11px; color:var(--text-muted);">تمثيل بصري حي للتمركز، الترابط بين الخطوط، مناطق النفوذ (Zone 14)، وجودة الفرص</span>
+                </div>
+                <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                    <button type="button" class="@(_activeMapTab == "passnet" ? "primary" : "")"
+                            @onclick='() => SwitchMapTab("passnet")'>
+                        🕸️ شبكة التمريرات والتمركز (@_report.PassNodes.Count لاعب)
+                    </button>
+                    <button type="button" class="@(_activeMapTab == "heatmap" ? "primary" : "")"
+                            @onclick='() => SwitchMapTab("heatmap")'>
+                        🔥 الخريطة الحرارية والمنطقة 14 (@_report.HeatmapPoints.Count نقطة)
+                    </button>
+                    <button type="button" class="@(_activeMapTab == "shotmap" ? "primary" : "")"
+                            @onclick='() => SwitchMapTab("shotmap")'>
+                        🎯 خريطة التسديدات والـ xG (@_report.ShotMap.Count تسديدة)
+                    </button>
+                </div>
+            </div>
+
+            <div style="display:grid; grid-template-columns:1.5fr 1fr; gap:16px; align-items:start;">
+                <div style="background:#0d1117; padding:10px; border-radius:8px; border:1px solid #30363d;">
+                    <canvas id="tacticalMapCanvas" width="820" height="500"
+                            style="width:100%; height:auto; max-height:420px; border-radius:6px; display:block;"></canvas>
+                </div>
+
+                <div style="background:#0d1117; padding:14px; border-radius:8px; border:1px solid #30363d; max-height:420px; overflow-y:auto;">
+                    @if (_activeMapTab == "passnet")
+                    {
+                        <h4 style="margin:0 0 10px 0; color:#58a6ff; font-size:14px;">🔗 أقوى ثنائيات التمرير والربط</h4>
+                        @if (_report.PassLinks.Any())
+                        {
+                            @foreach (var link in _report.PassLinks.Take(8))
+                            {
+                                <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 8px; margin-bottom:6px; background:#161b22; border-radius:4px; font-size:12px;">
+                                    <span><strong>@link.FromName</strong> ➔ <strong>@link.ToName</strong></span>
+                                    <span class="badge badge-info">@link.Count تمريرات</span>
+                                </div>
+                            }
+                        }
+                        else
+                        {
+                            <p style="font-size:12px; color:var(--text-muted);">
+                                سجّل تمريرات بإحداثيات (مع تحديد اللاعب المستقبِل أو أحداث متتالية) لرسم خطوط التمرير بين اللاعبين.
+                            </p>
+                        }
+                    }
+                    else if (_activeMapTab == "heatmap")
+                    {
+                        <h4 style="margin:0 0 10px 0; color:#eab308; font-size:14px;">🔥 قراءة مناطق النفوذ والمنطقة 14 (Zone 14)</h4>
+                        <p style="font-size:12px; color:#c9d1d9; line-height:1.6;">
+                            تقسم الخريطة الملعب إلى <strong>15 منطقة تكتيكية (5 طولية × 3 عرضية)</strong>. المربع المحاط باللون الأصفر يمثل <strong>المنطقة 14 (Zone 14)</strong> أمام منطقة الجزاء مباشرة، وهي أهم منطقة لصناعة الفرص المحققة.
+                        </p>
+                        <div style="margin-top:10px; padding:10px; background:#161b22; border-radius:6px; font-size:12px;">
+                            <div>إجمالي نقاط التواجد الميداني: <strong>@_report.HeatmapPoints.Count</strong></div>
+                            <div style="margin-top:4px;">العمليات داخل المنطقة 14: <strong style="color:#eab308;">@_report.HeatmapPoints.Count(p => p.X >= 60 && p.X <= 80 && p.Y >= 33 && p.Y <= 67)</strong></div>
+                        </div>
+                    }
+                    else if (_activeMapTab == "shotmap")
+                    {
+                        <h4 style="margin:0 0 10px 0; color:#3fb950; font-size:14px;">🎯 تفاصيل التسديدات وجودة الفرص (xG)</h4>
+                        <div style="display:flex; gap:10px; font-size:11px; margin-bottom:10px;">
+                            <span style="color:#3fb950;">● هدف</span>
+                            <span style="color:#eab308;">● بين القائمين</span>
+                            <span style="color:#f85149;">● خارج/مصدودة</span>
+                        </div>
+                        @if (_report.ShotMap.Any())
+                        {
+                            @foreach (var s in _report.ShotMap.OrderByDescending(x => x.Xg))
+                            {
+                                <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 8px; margin-bottom:6px; background:#161b22; border-radius:4px; font-size:12px;">
+                                    <span>@s.Label <small style="color:var(--text-muted);">(@s.X.ToString("F0"), @s.Y.ToString("F0"))</small></span>
+                                    <span class="badge @(s.IsGoal ? "badge-success" : "badge-warning")">xG: @s.Xg.ToString("F2")</span>
+                                </div>
+                            }
+                        }
+                        else
+                        {
+                            <p style="font-size:12px; color:var(--text-muted);">لا توجد تسديدات مسجلة بإحداثيات لهذا الفريق بعد.</p>
+                        }
+                    }
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══ جدول الـ KPIs المتقدمة بالتفصيل ═══ -->
+        <div class="card" style="margin-bottom:20px;">
+            <h3 class="card-title" style="margin-bottom:12px;">📊 مؤشرات الأداء التكتيكية القياسية للمباراة</h3>
+            <div class="table-responsive">
+                <table class="pro-table">
+                    <thead>
+                        <tr>
+                            <th>المؤشر التكتيكي</th>
+                            <th>@_report.FocusTeam.NameAr</th>
+                            <th>@_report.OpponentTeam.NameAr (الخصم)</th>
+                            <th>المعيار العالمي</th>
+                            <th>التقييم التكتيكي</th>
+                            <th>التفسير الفني</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var kpi in _report.Kpis)
+                        {
+                            <tr>
+                                <td style="font-weight:700; color:#58a6ff;">@kpi.NameAr</td>
+                                <td style="font-size:14px; font-weight:800; color:#3fb950;">@kpi.TeamValue</td>
+                                <td style="font-size:14px; color:#8b949e;">@kpi.OpponentValue</td>
+                                <td style="color:var(--text-muted); font-size:12px;">@kpi.Benchmark</td>
+                                <td>
+                                    <span class="badge badge-info">@kpi.Status</span>
+                                </td>
+                                <td style="font-size:12px; color:var(--text-muted);">@kpi.Description</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- ═══ شبكة SWOT التكتيكية ═══ -->
+        <h2 style="font-size:18px; margin:0 0 14px 0; color:#c9d1d9; font-weight:800;">
+            🎯 التقرير التكتيكي الشامل (SWOT Analysis Matrix) — @_report.FocusTeam.NameAr
+        </h2>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:24px;">
+            <!-- 1) نقاط القوة -->
+            <div class="card" style="border-top:4px solid #238636; background:#0d1117; margin:0;">
+                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <span style="font-size:20px;">💪</span>
+                        <h3 style="margin:0; font-size:16px; color:#3fb950; font-weight:800;">نقاط القوة التكتيكية (Strengths)</h3>
+                    </div>
+                    <span class="badge badge-success">@_report.Strengths.Count عوامل تميز</span>
+                </div>
+                <div style="display:flex; flex-direction:column; gap:10px;">
+                    @foreach (var s in _report.Strengths)
+                    {
+                        <div style="background:#161b22; border:1px solid #30363d; border-radius:6px; padding:10px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                                <strong style="color:#58a6ff; font-size:13px;">@s.Title</strong>
+                                <span style="font-size:10px; background:rgba(35, 134, 54, 0.2); color:#3fb950; padding:1px 6px; border-radius:4px;">@s.Category</span>
+                            </div>
+                            <p style="margin:0; font-size:12px; color:#c9d1d9; line-height:1.5;">@s.Description</p>
+                        </div>
+                    }
+                </div>
+            </div>
+
+            <!-- 2) نقاط الضعف -->
+            <div class="card" style="border-top:4px solid #da3633; background:#0d1117; margin:0;">
+                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <span style="font-size:20px;">⚠️</span>
+                        <h3 style="margin:0; font-size:16px; color:#f85149; font-weight:800;">نقاط الضعف والثغرات (Weaknesses)</h3>
+                    </div>
+                    <span class="badge badge-danger">@_report.Weaknesses.Count ثغرات مرصودة</span>
+                </div>
+                <div style="display:flex; flex-direction:column; gap:10px;">
+                    @foreach (var w in _report.Weaknesses)
+                    {
+                        <div style="background:#161b22; border:1px solid #30363d; border-radius:6px; padding:10px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                                <strong style="color:#f85149; font-size:13px;">@w.Title</strong>
+                                <span style="font-size:10px; background:rgba(218, 54, 51, 0.2); color:#f85149; padding:1px 6px; border-radius:4px;">درجة الخطورة: @w.Severity</span>
+                            </div>
+                            <p style="margin:0; font-size:12px; color:#c9d1d9; line-height:1.5;">@w.Description</p>
+                        </div>
+                    }
+                </div>
+            </div>
+
+            <!-- 3) الفرص التكتيكية -->
+            <div class="card" style="border-top:4px solid #1f6feb; background:#0d1117; margin:0;">
+                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <span style="font-size:20px;">🎯</span>
+                        <h3 style="margin:0; font-size:16px; color:#58a6ff; font-weight:800;">الفرص المتاحة للفوز (Opportunities)</h3>
+                    </div>
+                    <span class="badge badge-info">كيف نستغل ثغرات الخصم</span>
+                </div>
+                <div style="display:flex; flex-direction:column; gap:10px;">
+                    @foreach (var op in _report.Opportunities)
+                    {
+                        <div style="background:#161b22; border:1px solid #30363d; border-radius:6px; padding:10px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                                <strong style="color:#58a6ff; font-size:13px;">@op.Title</strong>
+                                <span style="font-size:10px; background:rgba(31, 111, 235, 0.2); color:#58a6ff; padding:1px 6px; border-radius:4px;">@op.Category</span>
+                            </div>
+                            <p style="margin:0; font-size:12px; color:#c9d1d9; line-height:1.5;">@op.Description</p>
+                        </div>
+                    }
+                </div>
+            </div>
+
+            <!-- 4) التهديدات -->
+            <div class="card" style="border-top:4px solid #d29922; background:#0d1117; margin:0;">
+                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <span style="font-size:20px;">🛡️</span>
+                        <h3 style="margin:0; font-size:16px; color:#d29922; font-weight:800;">التهديدات ومفاتيح خطورة الخصم (Threats)</h3>
+                    </div>
+                    <span class="badge badge-warning">عناصر يجب تحييدها</span>
+                </div>
+                <div style="display:flex; flex-direction:column; gap:10px;">
+                    @foreach (var t in _report.Threats)
+                    {
+                        <div style="background:#161b22; border:1px solid #30363d; border-radius:6px; padding:10px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                                <strong style="color:#d29922; font-size:13px;">@t.Title</strong>
+                                <span style="font-size:10px; background:rgba(210, 153, 34, 0.2); color:#d29922; padding:1px 6px; border-radius:4px;">@t.Severity</span>
+                            </div>
+                            <p style="margin:0; font-size:12px; color:#c9d1d9; line-height:1.5;">@t.Description</p>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══ تحليل اللاعبين الفردي ═══ -->
+        <div class="card" style="margin-bottom:24px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <span style="font-size:20px;">👤</span>
+                    <h3 class="card-title" style="margin:0;">تحليل أدوار اللاعبين التكتيكية ومؤشرات الأداء الفردية</h3>
+                </div>
+                <span style="font-size:12px; color:var(--text-muted);">تحليل فني لأبرز عناصر الفريق قيد المتابعة</span>
+            </div>
+
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:12px;">
+                @foreach (var p in _report.KeyPlayers)
+                {
+                    <div style="background:#0d1117; border:1px solid #21262d; border-radius:6px; padding:12px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; border-bottom:1px solid #21262d; padding-bottom:6px;">
+                            <div>
+                                <span style="font-weight:700; color:#58a6ff; font-size:14px;">#@p.ShirtNumber @p.NameAr</span>
+                                <span style="font-size:11px; background:#21262d; color:#8b949e; padding:1px 6px; border-radius:4px; margin-right:6px;">@p.Position</span>
+                            </div>
+                            <span style="font-size:11px; color:#3fb950; font-weight:700;">@p.SuccessRate% نجاح</span>
+                        </div>
+
+                        <div style="font-size:12px; color:#c9d1d9; margin-bottom:6px;">
+                            الدور التكتيكي: <strong style="color:#d29922;">@p.RoleAr</strong>
+                        </div>
+
+                        <div style="font-size:11px; color:#3fb950; margin-bottom:4px;">
+                            ✓ نقطة القوة: @p.KeyStrength
+                        </div>
+
+                        <div style="font-size:11px; color:#f85149; margin-bottom:8px;">
+                            ✗ نقطة الضعف/المخاطرة: @p.Vulnerability
+                        </div>
+
+                        <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--text-muted); background:#161b22; padding:4px 8px; border-radius:4px;">
+                            <span>الإجراءات: <strong>@p.TotalActions</strong></span>
+                            <span>مفتاحية: <strong>@p.KeyPasses</strong></span>
+                            <span>استرجاع: <strong>@p.Recoveries</strong></span>
+                            <span style="color:#bc8cff;">xT: <strong>@p.GeneratedXt.ToString("F2")</strong></span>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <!-- ═══ توجيهات المدرب وخطة المباراة ═══ -->
+        <div class="card" style="border:1px solid #388bfd; background:#0d1117;">
+            <div style="display:flex; align-items:center; gap:8px; margin-bottom:14px;">
+                <span style="font-size:22px;">📋</span>
+                <h3 class="card-title" style="margin:0; color:#58a6ff;">التوجيهات الفنية المقترحة للمدرب ومحلل الأداء (Coaching Directives)</h3>
+            </div>
+
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:12px;">
+                @foreach (var plan in _report.CoachingPlan)
+                {
+                    <div style="background:#161b22; border-right:3px solid #58a6ff; border-radius:4px; padding:12px;">
+                        <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+                            <strong style="color:#58a6ff; font-size:13px;">@plan.Phase</strong>
+                            <span class="badge badge-warning" style="font-size:10px;">@plan.Priority</span>
+                        </div>
+                        <p style="margin:0 0 6px 0; font-size:12px; color:#c9d1d9; font-weight:600; line-height:1.4;">
+                            @plan.Directive
+                        </p>
+                        <div style="font-size:11px; color:var(--text-muted);">
+                            السبب التكتيكي: @plan.Rationale
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public int MatchId { get; set; } = 1;
+
+    private List<Match> _matches = new();
+    private TacticalReportModel? _report;
+    private int _focusTeamId;
+    private string _activeMapTab = "passnet";
+
+    protected override async Task OnInitializedAsync()
+    {
+        _matches = await Db.Matches
+            .Include(m => m.HomeTeam)
+            .Include(m => m.AwayTeam)
+            .OrderByDescending(m => m.Date)
+            .ToListAsync();
+
+        if (MatchId == 0 && _matches.Count > 0)
+        {
+            MatchId = _matches[0].Id;
+        }
+
+        await LoadReportAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_report == null || _report.Match.Id != MatchId)
+        {
+            await LoadReportAsync();
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        await RenderTacticalMapAsync();
+    }
+
+    private async Task OnMatchChanged()
+    {
+        _focusTeamId = 0;
+        await LoadReportAsync();
+    }
+
+    private async Task LoadReportAsync()
+    {
+        _report = await IntelService.GenerateTacticalReportAsync(MatchId, _focusTeamId > 0 ? _focusTeamId : null);
+        if (_report != null && _focusTeamId == 0)
+        {
+            _focusTeamId = _report.FocusTeam.Id;
+        }
+        StateHasChanged();
+    }
+
+    private async Task SwitchFocusTeam(int teamId)
+    {
+        _focusTeamId = teamId;
+        _report = await IntelService.GenerateTacticalReportAsync(MatchId, teamId);
+        StateHasChanged();
+    }
+
+    private async Task SwitchMapTab(string tab)
+    {
+        _activeMapTab = tab;
+        await RenderTacticalMapAsync();
+    }
+
+    private async Task RenderTacticalMapAsync()
+    {
+        if (_report == null) return;
+        try
+        {
+            if (_activeMapTab == "passnet")
+            {
+                var nodes = _report.PassNodes.Select(n => new
+                {
+                    avgX = n.AvgX,
+                    avgY = n.AvgY,
+                    shirtNumber = n.ShirtNumber,
+                    name = n.Name,
+                    passCount = n.PassCount
+                }).ToList();
+
+                var links = _report.PassLinks.Select(l => new
+                {
+                    fromX = l.FromX,
+                    fromY = l.FromY,
+                    toX = l.ToX,
+                    toY = l.ToY,
+                    count = l.Count
+                }).ToList();
+
+                await JS.InvokeVoidAsync("PitchOverlay.drawPassNetwork", "tacticalMapCanvas", nodes, links);
+            }
+            else if (_activeMapTab == "heatmap")
+            {
+                var pts = _report.HeatmapPoints.Select(p => new { x = p.X, y = p.Y }).ToList();
+                await JS.InvokeVoidAsync("PitchOverlay.drawHeatmap", "tacticalMapCanvas", pts);
+            }
+            else if (_activeMapTab == "shotmap")
+            {
+                var shots = _report.ShotMap.Select(s => new
+                {
+                    x = s.X,
+                    y = s.Y,
+                    endX = s.EndX,
+                    endY = s.EndY,
+                    xg = s.Xg,
+                    isGoal = s.IsGoal,
+                    isOnTarget = s.IsOnTarget,
+                    label = s.Label
+                }).ToList();
+
+                await JS.InvokeVoidAsync("PitchOverlay.drawShotMap", "tacticalMapCanvas", shots);
+            }
+        }
+        catch { }
+    }
+
+    private double GetPercent(double value, double total)
+    {
+        if (total <= 0) return 50.0;
+        return Math.Round((value * 100.0) / total, 1);
+    }
+
+    private async Task PrintReport()
+    {
+        await JS.InvokeVoidAsync("window.print");
+    }
+}

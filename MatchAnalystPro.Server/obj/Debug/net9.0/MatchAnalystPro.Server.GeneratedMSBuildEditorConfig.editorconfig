@@ -1,0 +1,116 @@
+is_global = true
+build_property.TargetFramework = net9.0
+build_property.TargetFramework = net9.0
+build_property.TargetPlatformMinVersion = 
+build_property.TargetPlatformMinVersion = 
+build_property.UsingMicrosoftNETSdkWeb = true
+build_property.UsingMicrosoftNETSdkWeb = true
+build_property.ProjectTypeGuids = 
+build_property.ProjectTypeGuids = 
+build_property.InvariantGlobalization = 
+build_property.InvariantGlobalization = 
+build_property.PlatformNeutralAssembly = 
+build_property.PlatformNeutralAssembly = 
+build_property.EnforceExtendedAnalyzerRules = 
+build_property.EnforceExtendedAnalyzerRules = 
+build_property._SupportedPlatformList = Linux,macOS,Windows
+build_property._SupportedPlatformList = Linux,macOS,Windows
+build_property.TargetFrameworkIdentifier = .NETCoreApp
+build_property.TargetFrameworkVersion = v9.0
+build_property.EntryPointFilePath = 
+build_property.RootNamespace = MatchAnalystPro.Server
+build_property.RootNamespace = MatchAnalystPro.Server
+build_property.ProjectDir = E:\myItems\MatchAnalystPro\MatchAnalystPro.Server\
+build_property.EnableComHosting = 
+build_property.EnableGeneratedComInterfaceComImportInterop = 
+build_property.RazorLangVersion = 9.0
+build_property.SupportLocalizedComponentNames = 
+build_property.GenerateRazorMetadataSourceChecksumAttributes = 
+build_property.MSBuildProjectDirectory = E:\myItems\MatchAnalystPro\MatchAnalystPro.Server
+build_property._RazorSourceGeneratorDebug = 
+build_property.EffectiveAnalysisLevelStyle = 9.0
+build_property.EnableCodeStyleSeverity = 
+
+[E:/myItems/MatchAnalystPro/MatchAnalystPro.Server/Components/App.razor]
+build_metadata.AdditionalFiles.TargetPath = Q29tcG9uZW50c1xBcHAucmF6b3I=
+build_metadata.AdditionalFiles.CssScope = 
+
+[E:/myItems/MatchAnalystPro/MatchAnalystPro.Server/Components/Layout/MainLayout.razor]
+build_metadata.AdditionalFiles.TargetPath = Q29tcG9uZW50c1xMYXlvdXRcTWFpbkxheW91dC5yYXpvcg==
+build_metadata.AdditionalFiles.CssScope = 
+
+[E:/myItems/MatchAnalystPro/MatchAnalystPro.Server/Components/Layout/NavMenu.razor]
+build_metadata.AdditionalFiles.TargetPath = Q29tcG9uZW50c1xMYXlvdXRcTmF2TWVudS5yYXpvcg==
+build_metadata.AdditionalFiles.CssScope = 
+
+[E:/myItems/MatchAnalystPro/MatchAnalystPro.Server/Components/Pages/Error.razor]
+build_metadata.AdditionalFiles.TargetPath = Q29tcG9uZW50c1xQYWdlc1xFcnJvci5yYXpvcg==
+build_metadata.AdditionalFiles.CssScope = 
+
+[E:/myItems/MatchAnalystPro/MatchAnalystPro.Server/Components/Pages/ExportCenter.razor]
+build_metadata.AdditionalFiles.TargetPath = Q29tcG9uZW50c1xQYWdlc1xFeHBvcnRDZW50ZXIucmF6b3I=
+build_metadata.AdditionalFiles.CssScope = 
+
+[E:/myItems/MatchAnalystPro/MatchAnalystPro.Server/Components/Pages/Home.razor]
+build_metadata.AdditionalFiles.TargetPath = Q29tcG9uZW50c1xQYWdlc1xIb21lLnJhem9y
+build_metadata.AdditionalFiles.CssScope = 
+
+[E:/myItems/MatchAnalystPro/MatchAnalystPro.Server/Components/Pages/MatchesPage.razor]
+build_metadata.AdditionalFiles.TargetPath = Q29tcG9uZW50c1xQYWdlc1xNYXRjaGVzUGFnZS5yYXpvcg==
+build_metadata.AdditionalFiles.CssScope = 
+
+[E:/myItems/MatchAnalystPro/MatchAnalystPro.Server/Components/Pages/OppositionReportPage.razor]
+build_metadata.AdditionalFiles.TargetPath = Q29tcG9uZW50c1xQYWdlc1xPcHBvc2l0aW9uUmVwb3J0UGFnZS5yYXpvcg==
+build_metadata.AdditionalFiles.CssScope = 
+
+[E:/myItems/MatchAnalystPro/MatchAnalystPro.Server/Components/Pages/PitchCalibrationPage.razor]
+build_metadata.AdditionalFiles.TargetPath = Q29tcG9uZW50c1xQYWdlc1xQaXRjaENhbGlicmF0aW9uUGFnZS5yYXpvcg==
+build_metadata.AdditionalFiles.CssScope = 
+
+[E:/myItems/MatchAnalystPro/MatchAnalystPro.Server/Components/Pages/PossessionTimeline.razor]
+build_metadata.AdditionalFiles.TargetPath = Q29tcG9uZW50c1xQYWdlc1xQb3NzZXNzaW9uVGltZWxpbmUucmF6b3I=
+build_metadata.AdditionalFiles.CssScope = 
+
+[E:/myItems/MatchAnalystPro/MatchAnalystPro.Server/Components/Pages/QualityControlPage.razor]
+build_metadata.AdditionalFiles.TargetPath = Q29tcG9uZW50c1xQYWdlc1xRdWFsaXR5Q29udHJvbFBhZ2UucmF6b3I=
+build_metadata.AdditionalFiles.CssScope = 
+
+[E:/myItems/MatchAnalystPro/MatchAnalystPro.Server/Components/Pages/QueryBuilder.razor]
+build_metadata.AdditionalFiles.TargetPath = Q29tcG9uZW50c1xQYWdlc1xRdWVyeUJ1aWxkZXIucmF6b3I=
+build_metadata.AdditionalFiles.CssScope = 
+
+[E:/myItems/MatchAnalystPro/MatchAnalystPro.Server/Components/Pages/TacticalIntelligencePage.razor]
+build_metadata.AdditionalFiles.TargetPath = Q29tcG9uZW50c1xQYWdlc1xUYWN0aWNhbEludGVsbGlnZW5jZVBhZ2UucmF6b3I=
+build_metadata.AdditionalFiles.CssScope = 
+
+[E:/myItems/MatchAnalystPro/MatchAnalystPro.Server/Components/Pages/VideoTagger.razor]
+build_metadata.AdditionalFiles.TargetPath = Q29tcG9uZW50c1xQYWdlc1xWaWRlb1RhZ2dlci5yYXpvcg==
+build_metadata.AdditionalFiles.CssScope = 
+
+[E:/myItems/MatchAnalystPro/MatchAnalystPro.Server/Components/Routes.razor]
+build_metadata.AdditionalFiles.TargetPath = Q29tcG9uZW50c1xSb3V0ZXMucmF6b3I=
+build_metadata.AdditionalFiles.CssScope = 
+
+[E:/myItems/MatchAnalystPro/MatchAnalystPro.Server/Components/Shared/EventTagPanel.razor]
+build_metadata.AdditionalFiles.TargetPath = Q29tcG9uZW50c1xTaGFyZWRcRXZlbnRUYWdQYW5lbC5yYXpvcg==
+build_metadata.AdditionalFiles.CssScope = 
+
+[E:/myItems/MatchAnalystPro/MatchAnalystPro.Server/Components/Shared/FrameVideoPlayer.razor]
+build_metadata.AdditionalFiles.TargetPath = Q29tcG9uZW50c1xTaGFyZWRcRnJhbWVWaWRlb1BsYXllci5yYXpvcg==
+build_metadata.AdditionalFiles.CssScope = 
+
+[E:/myItems/MatchAnalystPro/MatchAnalystPro.Server/Components/Shared/MultiCameraPlayer.razor]
+build_metadata.AdditionalFiles.TargetPath = Q29tcG9uZW50c1xTaGFyZWRcTXVsdGlDYW1lcmFQbGF5ZXIucmF6b3I=
+build_metadata.AdditionalFiles.CssScope = 
+
+[E:/myItems/MatchAnalystPro/MatchAnalystPro.Server/Components/Shared/PitchCanvas.razor]
+build_metadata.AdditionalFiles.TargetPath = Q29tcG9uZW50c1xTaGFyZWRcUGl0Y2hDYW52YXMucmF6b3I=
+build_metadata.AdditionalFiles.CssScope = 
+
+[E:/myItems/MatchAnalystPro/MatchAnalystPro.Server/Components/Shared/VideoSourcePanel.razor]
+build_metadata.AdditionalFiles.TargetPath = Q29tcG9uZW50c1xTaGFyZWRcVmlkZW9Tb3VyY2VQYW5lbC5yYXpvcg==
+build_metadata.AdditionalFiles.CssScope = 
+
+[E:/myItems/MatchAnalystPro/MatchAnalystPro.Server/Components/_Imports.razor]
+build_metadata.AdditionalFiles.TargetPath = Q29tcG9uZW50c1xfSW1wb3J0cy5yYXpvcg==
+build_metadata.AdditionalFiles.CssScope = 

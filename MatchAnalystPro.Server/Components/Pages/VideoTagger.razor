@@ -1,0 +1,1264 @@
+@page "/tagger"
+@page "/tagger/{MatchId:int}"
+@inject AppDbContext Db
+@inject ClipService ClipService
+@inject VideoService VideoService
+@inject PossessionService PossessionService
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+@implements IAsyncDisposable
+
+<div class="tagger-layout">
+
+    <!-- ═══ منطقة الفيديو والملعب (يسار) ═══ -->
+    <div class="video-area">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; flex-wrap:wrap; gap:6px;">
+            <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                <div style="font-weight:700; font-size:14px; color:#58a6ff;">
+                    ⚽ @(Match?.HomeTeam?.NameAr ?? "المضيف") ضد @(Match?.AwayTeam?.NameAr ?? "الضيف") — @(Match?.Competition)
+                </div>
+                <div style="display:flex; align-items:center; gap:6px;">
+                    <span style="font-size:11px; color:var(--text-muted);">تبديل المباراة:</span>
+                    <select value="@MatchId" @onchange="OnMatchDropdownChanged"
+                            style="background:#161b22; border:1px solid #388bfd; color:#58a6ff; font-weight:700; padding:2px 8px; border-radius:6px; font-size:12px; cursor:pointer;">
+                        @foreach (var m in _availableMatches)
+                        {
+                            <option value="@m.Id">
+                                #@m.Id: @(m.HomeTeam?.NameAr ?? "مضيف") ضد @(m.AwayTeam?.NameAr ?? "ضيف") @(!string.IsNullOrEmpty(m.VideoPath) && File.Exists(m.VideoPath) ? "🎥 متصل" : "⚠️ بدون فيديو")
+                            </option>
+                        }
+                    </select>
+                </div>
+            </div>
+            <div style="font-size:12px; color:var(--text-muted); display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+                @if (_calibration != null)
+                {
+                    <span class="badge badge-success" title="يتم تحويل النقرات على الفيديو إلى إحداثيات الملعب الحقيقية عبر مصفوفة Homography">📐 المعايرة مفعّلة</span>
+                }
+                else
+                {
+                    <a href="/calibration/@MatchId" class="badge badge-warning" style="text-decoration:none;" title="انقر لمعايرة زوايا الملعب الأربع في الفيديو">📐 معايرة الملعب</a>
+                }
+                <button type="button" class="@(_liveTimerRunning ? "success" : "")" style="padding:2px 8px; font-size:11px;"
+                        @onclick="ToggleLiveTimer" title="تشغيل ساعة المباراة للتحليل المباشر من الملعب حتى بدون فيديو">
+                    ⏱️ @(_liveTimerRunning ? "إيقاف المؤقت الحي" : "تحليل حي (Live Timer)")
+                </button>
+                <button type="button" class="@(_showVideoManager ? "primary" : "")" style="padding:2px 8px; font-size:11px; cursor:pointer;" 
+                        @onclick="() => _showVideoManager = !_showVideoManager">
+                    📹 @(_showVideoManager ? "إخفاء إدارة الفيديو" : (!string.IsNullOrEmpty(VideoUrl) ? "تغيير / رفع الفيديو" : "إضافة / رفع فيديو"))
+                </button>
+            </div>
+        </div>
+
+        @if (_showVideoManager)
+        {
+            <VideoSourcePanel MatchId="@MatchId" 
+                              CurrentVideoPath="@(Match?.VideoPath ?? "")" 
+                              OnVideoUpdated="OnVideoSourceUpdated" 
+                              OnClose="() => _showVideoManager = false" />
+        }
+
+        @if (_cameras.Count > 1)
+        {
+            <MultiCameraPlayer @ref="_multiPlayer"
+                               Cameras="_cameras"
+                               Fps="@(Match?.VideoFps ?? 25)"
+                               GridColumns="@(_cameras.Count > 2 ? "1fr 1fr" : "1fr")"
+                               OnFrameChanged="OnFrameChanged" />
+        }
+        else
+        {
+            <FrameVideoPlayer @ref="_player"
+                              VideoId="mainVideo"
+                              VideoSrc="@VideoUrl"
+                              Fps="@(Match?.VideoFps ?? 25)"
+                              OnFrameChanged="OnFrameChanged"
+                              OnVideoPointClicked="OnVideoPointClicked"
+                              OnLocalVideoLoaded="OnLocalBlobVideoLoaded" />
+        }
+
+        <div class="frame-controls">
+            <button type="button" class="primary" @onclick="TogglePlay" title="تشغيل أو إيقاف مؤقت (Space)">
+                @(_isVideoPlaying ? "⏸️ إيقاف مؤقت" : "▶️ تشغيل / إيقاف")
+            </button>
+            <span class="frame-badge">الإطار: @_currentFrame</span>
+            <span class="time-badge">@FormatTime(_currentTimeMs)</span>
+            <button type="button" @onclick="() => StepFrame(-25)" title="ترجيع ثانية كاملة (سهم لأسفل)">⏪ ثانية</button>
+            <button type="button" @onclick="() => StepFrame(-1)" title="ترجيع إطار واحد (سهم يسار)">◀ إطار</button>
+            <button type="button" @onclick="() => StepFrame(1)" title="تقديم إطار واحد (سهم يمين)">إطار ▶</button>
+            <button type="button" @onclick="() => StepFrame(25)" title="تقديم ثانية كاملة (سهم لأعلى)">ثانية ⏩</button>
+            <select @bind="_playbackRate" @bind:after="OnRateChanged" title="سرعة التشغيل">
+                <option value="0.25">0.25x</option>
+                <option value="0.5">0.5x</option>
+                <option value="1">1x</option>
+                <option value="1.5">1.5x</option>
+                <option value="2">2x</option>
+            </select>
+        </div>
+
+        <div class="clip-controls">
+            <button type="button" @onclick="SetClipStartAsync" class="clip-btn" title="تحديد إطار بداية المقطع من اللحظة الحالية للفيديو (اختصار [)">
+                ▶ بداية المقطع (@_clipStartFrame)
+            </button>
+            <button type="button" @onclick="SetClipEndAsync" class="clip-btn" title="تحديد إطار نهاية المقطع من اللحظة الحالية للفيديو (اختصار ])">
+                ⏹ نهاية المقطع (@_clipEndFrame)
+            </button>
+            <button type="button" @onclick="PlayClip" class="clip-btn primary" title="تشغيل المقطع المحدد داخل مشغل الفيديو">
+                🎬 تشغيل المقطع (@(((_clipEndFrame > _clipStartFrame ? (_clipEndFrame - _clipStartFrame) : 0) / (double)(Match?.VideoFps ?? 25)).ToString("F1")) ث)
+            </button>
+            <button type="button" @onclick="ExportStarredMontage" disabled="@_isExportingMontage"
+                    style="background:#8957e5; border-color:#a371f7; color:#fff; font-size:11px; padding:5px 12px; font-weight:700; cursor:pointer;"
+                    title="تصدير فيلم MP4 للأحداث المميزة بنجمة ⭐ أو المقطع الحالي">
+                @if (_isExportingMontage)
+                {
+                    <span>⏳ جاري تجهيز الفيديو...</span>
+                }
+                else if (_events.Any(e => e.FlaggedForReview))
+                {
+                    <span>🎞️ تصدير فيلم المحاضرة (@_events.Count(e => e.FlaggedForReview)⭐)</span>
+                }
+                else
+                {
+                    <span>🎞️ تصدير فيلم المحاضرة (@(_events.Count > 0 ? $"{_events.Count} حدث" : "المقطع الحالي"))</span>
+                }
+            </button>
+        </div>
+
+        @if (!string.IsNullOrEmpty(_exportedClipUrl))
+        {
+            <div style="background:rgba(35, 134, 54, 0.2); border:1px solid #2ea043; border-radius:6px; padding:6px 12px; display:flex; justify-content:space-between; align-items:center; font-size:12px;">
+                <span style="color:#3fb950; font-weight:700;">✅ @_exportedClipMessage</span>
+                <div style="display:flex; gap:8px;">
+                    <a href="@_exportedClipUrl" download style="background:#238636; color:#fff; padding:3px 10px; border-radius:4px; text-decoration:none; font-weight:700;">
+                        📥 تحميل ملف MP4
+                    </a>
+                    <a href="@_exportedClipUrl" target="_blank" style="background:#1f6feb; color:#fff; padding:3px 10px; border-radius:4px; text-decoration:none;">
+                        ▶️ تشغيل في نافذة مستقلة
+                    </a>
+                    <button type="button" style="padding:2px 6px; font-size:11px;" @onclick='() => _exportedClipUrl = ""'>✖</button>
+                </div>
+            </div>
+        }
+
+        @if (!string.IsNullOrEmpty(_clipErrorMessage))
+        {
+            <div style="background:rgba(248, 81, 73, 0.18); border:1px solid #f85149; border-radius:6px; padding:6px 12px; display:flex; justify-content:space-between; align-items:center; font-size:12px; color:#f85149;">
+                <span>⚠️ @_clipErrorMessage</span>
+                <button type="button" style="padding:2px 6px; font-size:11px;" @onclick='() => _clipErrorMessage = ""'>✖</button>
+            </div>
+        }
+
+        <!-- خريطة الملعب التفاعلية للإحداثيات -->
+        <div style="margin-top:4px; background:#11161d; border-radius:6px; padding:6px; border:1px solid var(--border-color);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; flex-wrap:wrap; gap:4px;">
+                <span style="font-size:11px; font-weight:600; color:#58a6ff;">
+                    📍 موقع الحدث (انقر مباشرة على اللاعب في الفيديو أعلاه أو على الخريطة أدناه):
+                </span>
+                <div style="display:flex; gap:6px; align-items:center;">
+                    <button type="button" style="font-size:11px; padding:2px 8px; background:@(_coordMode == 0 ? "var(--color-primary)" : "#21262d")"
+                            @onclick="() => _coordMode = 0">نقطة البداية (X:@(_currentX?.ToString("F1") ?? "-"), Y:@(_currentY?.ToString("F1") ?? "-"))</button>
+                    <button type="button" style="font-size:11px; padding:2px 8px; background:@(_coordMode == 1 ? "var(--color-warning)" : "#21262d")"
+                            @onclick="() => _coordMode = 1">نقطة النهاية (EndX:@(_currentEndX?.ToString("F1") ?? "-"), EndY:@(_currentEndY?.ToString("F1") ?? "-"))</button>
+                    <button type="button" style="font-size:11px; padding:2px 6px;" @onclick="ClearCoords">مسح</button>
+                </div>
+            </div>
+            <PitchCanvas @ref="_pitchCanvas" Width="100%" Height="170px" Events="@GetPitchEvents()" OnPointSelected="OnPitchPointSelected" />
+        </div>
+    </div>
+
+    <!-- ═══ لوحة التصنيف (يمين) ═══ -->
+    <div class="tagger-panel">
+        @if (_editingEvent != null)
+        {
+            <div style="background:rgba(210, 153, 34, 0.15); border:1px solid #d29922; border-radius:6px; padding:6px 10px; display:flex; justify-content:space-between; align-items:center; font-size:12px;">
+                <span style="color:#d29922; font-weight:700;">✏️ وضع تعديل الحدث #@_editingEvent.Id (@_editingEvent.Minute':@_editingEvent.Second.ToString("00"))</span>
+                <button type="button" style="padding:2px 8px; font-size:11px;" @onclick="CancelEditEvent">إلغاء التعديل</button>
+            </div>
+        }
+
+        <!-- الفريق -->
+        <div class="field-group">
+            <label>الفريق</label>
+            <div style="display:flex; gap:6px;">
+                @if (Match?.HomeTeam != null)
+                {
+                    <button type="button" class="@(_selectedTeamId == Match.HomeTeamId ? "primary" : "")"
+                            style="flex:1; font-weight:700;"
+                            @onclick="() => SelectTeamQuick(Match.HomeTeamId)">
+                        🏠 @Match.HomeTeam.NameAr
+                    </button>
+                }
+                @if (Match?.AwayTeam != null)
+                {
+                    <button type="button" class="@(_selectedTeamId == Match.AwayTeamId ? "primary" : "")"
+                            style="flex:1; font-weight:700;"
+                            @onclick="() => SelectTeamQuick(Match.AwayTeamId)">
+                        ✈️ @Match.AwayTeam.NameAr
+                    </button>
+                }
+            </div>
+        </div>
+
+        <!-- اختيار سريع للاعب برقم القميص أو القائمة -->
+        <div class="field-group">
+            <label>اللاعب المنفذ للحدث</label>
+            <select @bind="_selectedPlayerId">
+                <option value="0">-- اختر اللاعب --</option>
+                @foreach (var p in _currentPlayers)
+                {
+                    <option value="@p.Id">@p.ShirtNumber - @p.NameAr (@p.Position)</option>
+                }
+            </select>
+            @if (_currentPlayers.Any())
+            {
+                <div style="display:flex; flex-wrap:wrap; gap:3px; margin-top:3px;">
+                    @foreach (var p in _currentPlayers)
+                    {
+                        <button type="button"
+                                style="font-size:10px; padding:2px 6px; border-radius:4px; background:@(_selectedPlayerId == p.Id ? "var(--color-primary)" : "#161b22");"
+                                title="@p.NameAr (@p.Position)"
+                                @onclick="() => _selectedPlayerId = p.Id">
+                            #@p.ShirtNumber @GetShortName(p.NameAr)
+                        </button>
+                    }
+                </div>
+            }
+        </div>
+
+        <!-- اللاعب المستقبِل / المرتبط (لشبكة التمريرات والتبديلات) -->
+        @if (_selectedCategory is "pass" or "substitution" or "duel")
+        {
+            <div class="field-group">
+                <label style="color:#58a6ff;">
+                    @(_selectedCategory == "pass" ? "🔗 اللاعب المستقبِل للتمريرة (لشبكة التمريرات)" : "🔄 اللاعب المرتبط / البديل")
+                </label>
+                <select @bind="_relatedPlayerId">
+                    <option value="0">-- اختياري (أو يُستنتج تلقائياً) --</option>
+                    @foreach (var p in _currentPlayers.Where(x => x.Id != _selectedPlayerId))
+                    {
+                        <option value="@p.Id">@p.ShirtNumber - @p.NameAr (@p.Position)</option>
+                    }
+                </select>
+            </div>
+        }
+
+        <!-- الشوط -->
+        <div class="field-group">
+            <label>الشوط</label>
+            <div style="display:flex; gap:6px;">
+                <button type="button" class="@(_period == 1 ? "primary" : "")" style="flex:1;" @onclick="() => _period = 1">الشوط 1</button>
+                <button type="button" class="@(_period == 2 ? "primary" : "")" style="flex:1;" @onclick="() => _period = 2">الشوط 2</button>
+                <button type="button" class="@(_period == 3 ? "primary" : "")" style="flex:1;" @onclick="() => _period = 3">إضافي 1</button>
+                <button type="button" class="@(_period == 4 ? "primary" : "")" style="flex:1;" @onclick="() => _period = 4">إضافي 2</button>
+            </div>
+        </div>
+
+        <!-- الفئات -->
+        <div class="categories-section">
+            <label style="font-size:12px; color:var(--text-muted); font-weight:600;">فئة الحدث (اختصار 1-9)</label>
+            <div class="category-grid">
+                @foreach (var (cat, idx) in EventTaxonomy.Categories.Select((c, i) => (c, i + 1)))
+                {
+                    <button type="button" class="cat-btn @(_selectedCategory == cat.Key ? "selected" : "")"
+                            style="border-color:@cat.Color"
+                            @onclick="() => SelectCategory(cat.Key)">
+                        <span class="key-hint">@idx</span>
+                        @cat.Ar
+                    </button>
+                }
+            </div>
+        </div>
+
+        <!-- النوع الفرعي -->
+        @if (!string.IsNullOrEmpty(_selectedCategory))
+        {
+            var cat = EventTaxonomy.GetCategory(_selectedCategory);
+            @if (cat != null)
+            {
+                <div class="subtypes-section">
+                    <label style="font-size:12px; color:var(--text-muted); font-weight:600;">النوع الفرعي لـ (@cat.Ar)</label>
+                    <div class="subtype-grid">
+                        @foreach (var st in cat.SubTypes)
+                        {
+                            <button type="button" class="subtype-btn @(_selectedSubType == st.Key ? "selected" : "")"
+                                    @onclick="() => _selectedSubType = st.Key">
+                                @st.Ar
+                            </button>
+                        }
+                    </div>
+                </div>
+            }
+        }
+
+        <!-- النتيجة -->
+        <div class="field-group">
+            <label>نتيجة الحدث</label>
+            <div class="outcome-grid">
+                <button type="button" class="@(_outcome == "successful" ? "selected" : "")"
+                        @onclick='() => _outcome = "successful"'>✓ ناجح</button>
+                <button type="button" class="@(_outcome == "failed" ? "selected" : "")"
+                        @onclick='() => _outcome = "failed"'>✗ فاشل</button>
+                <button type="button" class="@(_outcome == "key" ? "selected" : "")"
+                        @onclick='() => _outcome = "key"'>★ مفتاحي</button>
+                <button type="button" class="@(_outcome == "goal" ? "selected" : "")"
+                        @onclick='() => _outcome = "goal"'>⚽ هدف</button>
+            </div>
+        </div>
+
+        <!-- الخصائص الإضافية (Qualifiers) -->
+        <div class="field-group">
+            <label>خصائص تكتيكية (Qualifiers)</label>
+            <div style="display:flex; flex-wrap:wrap; gap:4px; max-height:80px; overflow-y:auto; padding:4px; background:var(--bg-input); border-radius:6px; border:1px solid var(--border-color);">
+                @foreach (var q in EventTaxonomy.Qualifiers)
+                {
+                    var isSelected = _selectedQualifiers.Contains(q.Key);
+                    <button type="button" style="font-size:10px; padding:3px 6px; background:@(isSelected ? "var(--color-primary)" : "#21262d");"
+                            @onclick="() => ToggleQualifier(q.Key)">
+                        @q.Value
+                    </button>
+                }
+            </div>
+        </div>
+
+        <!-- الملاحظة وتمييز الحدث للمحاضرة الفنية -->
+        <div class="field-group">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <label>ملاحظة</label>
+                <label style="display:flex; align-items:center; gap:4px; cursor:pointer; color:#eab308; font-size:11px;">
+                    <input type="checkbox" @bind="_flagForPresentation" />
+                    ⭐ ضم لفيلم المحاضرة الفنية
+                </label>
+            </div>
+            <textarea @bind="_note" rows="2" placeholder="ملاحظة تكتيكية للحدث..."></textarea>
+        </div>
+
+        <!-- حفظ -->
+        <button type="button" class="save-btn" @onclick="SaveEvent">
+            @(_editingEvent != null ? "💾 حفظ تعديلات الحدث (Enter)" : "💾 حفظ الحدث في هذا الفريم (Enter)")
+        </button>
+
+        <div class="stats-bar">
+            <span>✅ @_events.Count حدث مسجّل</span>
+            @if (_events.Count > 0)
+            {
+                <span>آخر حدث: @_events.First().Minute':@_events.First().Second.ToString("00")</span>
+            }
+        </div>
+    </div>
+
+    <!-- ═══ الأحداث المسجّلة (أسفل) ═══ -->
+    <div class="events-area">
+        <div class="events-header">
+            <h3>الأحداث المسجّلة (@_events.Count) — انقر على أي حدث للقفز إلى لحظته في الفيديو أو تعديله</h3>
+            <input type="text" placeholder="🔍 تصفية في الأحداث..." @bind="_searchTerm" @bind:event="oninput" />
+        </div>
+        <div class="events-list">
+            @foreach (var e in FilteredEvents().OrderByDescending(x => x.FrameNumber))
+            {
+                <div class="event-row @(e.FlaggedForReview ? "flagged" : "") @(_editingEvent?.Id == e.Id ? "selected" : "")"
+                     style="@(_editingEvent?.Id == e.Id ? "border-color:#58a6ff; background:#1f2937;" : "")"
+                     @onclick="() => JumpToEvent(e)">
+                    <span class="ev-time">@e.Minute':@e.Second.ToString("00") <small style="color:#6e7681;">(F:@e.FrameNumber)</small></span>
+                    <span class="ev-cat" style="background:@GetCategoryColor(e.Category)">
+                        @GetCategoryName(e.Category)
+                    </span>
+                    <span class="ev-sub">@GetSubTypeName(e.Category, e.SubType)</span>
+                    <span class="ev-player">@(e.Player?.NameAr ?? e.Team?.NameAr ?? "-")</span>
+                    <span class="ev-outcome @e.Outcome">@GetOutcomeAr(e.Outcome)</span>
+                    <div style="display:flex; gap:4px; align-items:center;">
+                        <button type="button" class="ev-clip" title="إضافة/إزالة من فيلم المحاضرة الفنية" @onclick:stopPropagation="true"
+                                style="color:@(e.FlaggedForReview ? "#eab308" : "#6e7681");"
+                                @onclick="() => ToggleStarEvent(e)">⭐</button>
+                        <button type="button" class="ev-clip" title="تعديل هذا الحدث" @onclick:stopPropagation="true"
+                                @onclick="() => StartEditEvent(e)">✏️</button>
+                        <button type="button" class="ev-clip" title="توليد مقطع MP4 لهذا الحدث" @onclick:stopPropagation="true"
+                                @onclick="() => GenerateClip(e)">🎬</button>
+                        <button type="button" class="ev-delete" title="حذف" @onclick:stopPropagation="true"
+                                @onclick="() => DeleteEvent(e)">🗑</button>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public int MatchId { get; set; } = 1;
+    [SupplyParameterFromQuery(Name = "frame")] public long? InitialFrame { get; set; }
+    [SupplyParameterFromQuery(Name = "eventId")] public long? InitialEventId { get; set; }
+
+    private readonly CoordinateService _coordService = new();
+    private Match? Match;
+    private PitchCalibration? _calibration;
+    private MathNet.Numerics.LinearAlgebra.Matrix<double>? _homography;
+
+    private string VideoUrl = "";
+    private FrameVideoPlayer? _player;
+    private MultiCameraPlayer? _multiPlayer;
+    private List<MultiCameraPlayer.CameraSource> _cameras = new();
+    private PitchCanvas? _pitchCanvas;
+    private bool _showVideoManager = false;
+    private bool _isExportingMontage = false;
+    private bool _isVideoPlaying = false;
+    private string _exportedClipUrl = "";
+    private string _exportedClipMessage = "";
+    private string _clipErrorMessage = "";
+
+    // مؤقت التحليل الحي في الملعب (Live Coding Timer)
+    private bool _liveTimerRunning = false;
+    private PeriodicTimer? _liveTimer;
+    private CancellationTokenSource? _liveTimerCts;
+
+    private long _currentFrame = 0;
+    private long _currentTimeMs = 0;
+    private long _clipStartFrame = 0;
+    private long _clipEndFrame = 0;
+    private double _playbackRate = 1.0;
+    private int _period = 1;
+
+    private int _selectedTeamId;
+    private int _selectedPlayerId;
+    private int _relatedPlayerId;
+    private List<Player> _currentPlayers = new();
+
+    private string _selectedCategory = "pass";
+    private string _selectedSubType = "short";
+    private string _outcome = "successful";
+    private string _note = "";
+    private bool _flagForPresentation = false;
+    private string _searchTerm = "";
+    private List<string> _selectedQualifiers = new();
+
+    private double? _currentX = 50;
+    private double? _currentY = 50;
+    private double? _currentEndX = 65;
+    private double? _currentEndY = 45;
+    private double? _videoMarkerXPct;
+    private double? _videoMarkerYPct;
+    private double? _videoMarkerEndXPct;
+    private double? _videoMarkerEndYPct;
+    private int _coordMode = 0;
+
+    private Event? _editingEvent;
+    private List<Match> _availableMatches = new();
+    private List<Event> _events = new();
+    private DotNetObjectReference<VideoTagger>? _shortcutsRef;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadMatchAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Match == null || Match.Id != MatchId)
+        {
+            await LoadMatchAsync();
+        }
+    }
+
+    private async Task OnMatchDropdownChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var newId) && newId != MatchId)
+        {
+            MatchId = newId;
+            _editingEvent = null;
+            Nav.NavigateTo($"/tagger/{MatchId}", forceLoad: false);
+            await LoadMatchAsync();
+        }
+    }
+
+    private async Task LoadMatchAsync()
+    {
+        _availableMatches = await Db.Matches
+            .Include(m => m.HomeTeam)
+            .Include(m => m.AwayTeam)
+            .OrderByDescending(m => m.Date)
+            .ThenByDescending(m => m.Id)
+            .ToListAsync();
+
+        if (!Nav.Uri.Contains("/tagger/") && _availableMatches.Count > 0)
+        {
+            var matchWithVideo = _availableMatches.FirstOrDefault(m => !string.IsNullOrEmpty(m.VideoPath) && File.Exists(m.VideoPath));
+            MatchId = matchWithVideo?.Id ?? _availableMatches[0].Id;
+        }
+
+        Match = await Db.Matches
+            .Include(m => m.HomeTeam)
+            .Include(m => m.AwayTeam)
+            .FirstOrDefaultAsync(m => m.Id == MatchId);
+
+        if (Match == null && _availableMatches.Count > 0)
+        {
+            Match = _availableMatches[0];
+            MatchId = Match.Id;
+        }
+
+        _calibration = await Db.PitchCalibrations
+            .Where(c => c.MatchId == MatchId)
+            .OrderByDescending(c => c.Id)
+            .FirstOrDefaultAsync();
+
+        if (_calibration != null)
+        {
+            try
+            {
+                _homography = _coordService.BuildHomography(_calibration);
+            }
+            catch
+            {
+                _homography = null;
+            }
+        }
+        else
+        {
+            _homography = null;
+        }
+
+        _cameras.Clear();
+        if (Match != null && !string.IsNullOrEmpty(Match.VideoPath) && File.Exists(Match.VideoPath))
+        {
+            VideoUrl = VideoService.ResolvePlayableVideoUrl(Match);
+            _cameras.Add(new("الكاميرا الرئيسية", VideoUrl, "cam0"));
+
+            var baseDir = Path.GetDirectoryName(Match.VideoPath);
+            if (!string.IsNullOrEmpty(baseDir))
+            {
+                var cacheBust = DateTime.UtcNow.Ticks;
+                for (int i = 1; i <= 3; i++)
+                {
+                    var extra = Path.Combine(baseDir, $"cam{i}.mp4");
+                    if (File.Exists(extra))
+                    {
+                        _cameras.Add(new($"كاميرا {i}", $"/api/video/{Match.Id}/{i}?v={cacheBust}", $"cam{i}"));
+                    }
+                }
+            }
+            _showVideoManager = false;
+        }
+        else
+        {
+            VideoUrl = "";
+            _showVideoManager = true;
+        }
+
+        if (Match != null)
+        {
+            _selectedTeamId = Match.HomeTeamId;
+            await OnTeamChanged();
+
+            _events = await Db.Events
+                .Include(e => e.Player)
+                .Include(e => e.Team)
+                .Where(e => e.MatchId == Match.Id)
+                .OrderByDescending(e => e.FrameNumber)
+                .ToListAsync();
+        }
+        StateHasChanged();
+    }
+
+    private async Task SelectTeamQuick(int teamId)
+    {
+        _selectedTeamId = teamId;
+        await OnTeamChanged();
+    }
+
+    private void ToggleLiveTimer()
+    {
+        if (_liveTimerRunning)
+        {
+            _liveTimerRunning = false;
+            _liveTimerCts?.Cancel();
+            _liveTimer?.Dispose();
+            return;
+        }
+
+        _liveTimerRunning = true;
+        _liveTimerCts = new CancellationTokenSource();
+        _liveTimer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+        var fps = Match?.VideoFps ?? 25;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                while (await _liveTimer.WaitForNextTickAsync(_liveTimerCts.Token))
+                {
+                    _currentFrame += fps;
+                    _currentTimeMs = (long)(_currentFrame * 1000.0 / fps);
+                    await InvokeAsync(StateHasChanged);
+                }
+            }
+            catch { }
+        });
+    }
+
+    private async Task OnVideoSourceUpdated()
+    {
+        await LoadMatchAsync();
+        _showVideoManager = false;
+        StateHasChanged();
+    }
+
+    private void OnLocalBlobVideoLoaded(string fileName)
+    {
+        _showVideoManager = false;
+        StateHasChanged();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            try
+            {
+                _shortcutsRef = DotNetObjectReference.Create(this);
+                await JS.InvokeVoidAsync("Shortcuts.register", _shortcutsRef);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[VideoTagger] Shortcuts error: {ex.Message}");
+            }
+
+            if (InitialEventId.HasValue)
+            {
+                var targetEv = _events.FirstOrDefault(e => e.Id == InitialEventId.Value);
+                if (targetEv != null)
+                {
+                    await StartEditEvent(targetEv);
+                }
+            }
+            else if (InitialFrame.HasValue && InitialFrame.Value > 0)
+            {
+                _currentFrame = InitialFrame.Value;
+                _currentTimeMs = (long)(_currentFrame * 1000.0 / (Match?.VideoFps ?? 25));
+                if (_player != null)
+                {
+                    await _player.SeekToFrame(_currentFrame);
+                }
+                StateHasChanged();
+            }
+        }
+    }
+
+    private async Task OnFrameChanged(long frame)
+    {
+        _currentFrame = frame;
+        _currentTimeMs = (long)(frame * 1000.0 / (Match?.VideoFps ?? 25));
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task OnVideoPointClicked((double VideoX, double VideoY, double XPct, double YPct, long Frame) pt)
+    {
+        _currentFrame = pt.Frame;
+        _currentTimeMs = (long)(pt.Frame * 1000.0 / (Match?.VideoFps ?? 25));
+        _isVideoPlaying = false;
+
+        double pitchX = pt.XPct;
+        double pitchY = pt.YPct;
+
+        if (_calibration != null && _homography != null)
+        {
+            var meters = _coordService.VideoToPitch(pt.VideoX, pt.VideoY, _homography);
+            var norm = _coordService.Normalize(meters.X, meters.Y, _calibration.PitchLengthM, _calibration.PitchWidthM);
+            pitchX = Math.Round(norm.X, 1);
+            pitchY = Math.Round(norm.Y, 1);
+        }
+        else
+        {
+            pitchX = Math.Round(pt.XPct, 1);
+            pitchY = Math.Round(pt.YPct, 1);
+        }
+
+        var cat = EventTaxonomy.GetCategory(_selectedCategory);
+        var sub = cat?.SubTypes.FirstOrDefault(s => s.Key == _selectedSubType);
+        bool requiresEnd = sub?.RequiresEndPoint ?? (_selectedCategory is "pass" or "carry" or "shot");
+
+        if (_coordMode == 0 || !requiresEnd)
+        {
+            _currentX = pitchX;
+            _currentY = pitchY;
+            _videoMarkerXPct = pt.XPct;
+            _videoMarkerYPct = pt.YPct;
+
+            if (!requiresEnd)
+            {
+                _currentEndX = null;
+                _currentEndY = null;
+                _videoMarkerEndXPct = null;
+                _videoMarkerEndYPct = null;
+                _coordMode = 0;
+            }
+            else
+            {
+                _coordMode = 1;
+            }
+        }
+        else
+        {
+            _currentEndX = pitchX;
+            _currentEndY = pitchY;
+            _videoMarkerEndXPct = pt.XPct;
+            _videoMarkerEndYPct = pt.YPct;
+            _coordMode = 0;
+        }
+
+        if (_player != null)
+        {
+            await _player.SetVideoMarker(
+                _videoMarkerXPct,
+                _videoMarkerYPct,
+                _videoMarkerEndXPct,
+                _videoMarkerEndYPct,
+                GetCategoryColor(_selectedCategory),
+                GetSubTypeName(_selectedCategory, _selectedSubType));
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task StepFrame(long delta)
+    {
+        _isVideoPlaying = false;
+        var fps = Match?.VideoFps ?? 25;
+
+        if (_multiPlayer != null)
+        {
+            var target = Math.Max(0, _currentFrame + delta);
+            await _multiPlayer.SeekAll(target);
+            _currentFrame = target;
+        }
+        else if (_player != null && !_liveTimerRunning)
+        {
+            // تحريك عنصر الفيديو الفعلي مباشرة وإرجاع رقم الإطار الجديد
+            var newFrame = await _player.StepFramesDirect(delta);
+            if (newFrame > 0 || delta < 0)
+            {
+                _currentFrame = newFrame;
+            }
+            else
+            {
+                _currentFrame = Math.Max(0, _currentFrame + delta);
+                await _player.SeekToFrame(_currentFrame);
+            }
+        }
+        else
+        {
+            _currentFrame = Math.Max(0, _currentFrame + delta);
+        }
+
+        _currentTimeMs = (long)(_currentFrame * 1000.0 / fps);
+        StateHasChanged();
+    }
+
+    private async Task OnRateChanged()
+    {
+        if (_player != null) await _player.SetPlaybackRate(_playbackRate);
+    }
+
+    private async Task SetClipStartAsync()
+    {
+        var fps = Match?.VideoFps ?? 25;
+        if (_player != null && !_liveTimerRunning)
+        {
+            var liveFrame = await _player.GetCurrentFrame();
+            if (liveFrame > 0) _currentFrame = liveFrame;
+        }
+        _currentTimeMs = (long)(_currentFrame * 1000.0 / fps);
+        _clipStartFrame = _currentFrame;
+        if (_clipEndFrame <= _clipStartFrame)
+        {
+            _clipEndFrame = _clipStartFrame + 5 * fps;
+        }
+        StateHasChanged();
+    }
+
+    private async Task SetClipEndAsync()
+    {
+        var fps = Match?.VideoFps ?? 25;
+        if (_player != null && !_liveTimerRunning)
+        {
+            var liveFrame = await _player.GetCurrentFrame();
+            if (liveFrame > 0) _currentFrame = liveFrame;
+        }
+        _currentTimeMs = (long)(_currentFrame * 1000.0 / fps);
+        _clipEndFrame = _currentFrame;
+        if (_clipEndFrame <= _clipStartFrame)
+        {
+            _clipStartFrame = Math.Max(0, _clipEndFrame - 5 * fps);
+        }
+        StateHasChanged();
+    }
+
+    private async Task PlayClip()
+    {
+        var fps = Match?.VideoFps ?? 25;
+        if (_player != null && !_liveTimerRunning)
+        {
+            var liveFrame = await _player.GetCurrentFrame();
+            if (liveFrame > 0 && _clipStartFrame == 0 && _clipEndFrame == 0)
+            {
+                _currentFrame = liveFrame;
+            }
+        }
+
+        if (_clipEndFrame <= _clipStartFrame)
+        {
+            _clipStartFrame = Math.Max(0, _currentFrame - 2 * fps);
+            _clipEndFrame = _currentFrame + 3 * fps;
+        }
+
+        _isVideoPlaying = true;
+        if (_player != null)
+        {
+            await _player.PlayRange(_clipStartFrame, _clipEndFrame);
+        }
+        else if (_multiPlayer != null)
+        {
+            await _multiPlayer.SeekAll(_clipStartFrame);
+            await _multiPlayer.TogglePlay();
+        }
+        StateHasChanged();
+    }
+
+    private async Task OnTeamChanged()
+    {
+        _currentPlayers = await Db.Players.Where(p => p.TeamId == _selectedTeamId).OrderBy(p => p.ShirtNumber).ToListAsync();
+        if (_editingEvent == null || !_currentPlayers.Any(p => p.Id == _selectedPlayerId))
+        {
+            _selectedPlayerId = _currentPlayers.FirstOrDefault()?.Id ?? 0;
+            _relatedPlayerId = 0;
+        }
+    }
+
+    private void SelectCategory(string cat)
+    {
+        _selectedCategory = cat;
+        var firstSub = EventTaxonomy.GetCategory(cat)?.SubTypes.FirstOrDefault()?.Key;
+        _selectedSubType = firstSub ?? "";
+    }
+
+    private void ToggleQualifier(string key)
+    {
+        if (_selectedQualifiers.Contains(key))
+            _selectedQualifiers.Remove(key);
+        else
+            _selectedQualifiers.Add(key);
+    }
+
+    private void OnPitchPointSelected((double X, double Y) pt)
+    {
+        if (_coordMode == 0)
+        {
+            _currentX = Math.Round(pt.X, 1);
+            _currentY = Math.Round(pt.Y, 1);
+            _coordMode = 1;
+        }
+        else
+        {
+            _currentEndX = Math.Round(pt.X, 1);
+            _currentEndY = Math.Round(pt.Y, 1);
+            _coordMode = 0;
+        }
+        StateHasChanged();
+    }
+
+    private async Task ClearCoords()
+    {
+        _currentX = null;
+        _currentY = null;
+        _currentEndX = null;
+        _currentEndY = null;
+        _videoMarkerXPct = null;
+        _videoMarkerYPct = null;
+        _videoMarkerEndXPct = null;
+        _videoMarkerEndYPct = null;
+        _coordMode = 0;
+        if (_player != null)
+        {
+            await _player.ClearOverlay();
+        }
+    }
+
+    private List<PitchCanvas.PitchEventModel> GetPitchEvents()
+    {
+        var list = new List<PitchCanvas.PitchEventModel>();
+        if (_currentX.HasValue && _currentY.HasValue)
+        {
+            list.Add(new PitchCanvas.PitchEventModel
+            {
+                X = _currentX.Value,
+                Y = _currentY.Value,
+                EndX = _currentEndX,
+                EndY = _currentEndY,
+                Color = GetCategoryColor(_selectedCategory),
+                Label = GetSubTypeName(_selectedCategory, _selectedSubType),
+                Radius = 7
+            });
+        }
+        return list;
+    }
+
+    private async Task StartEditEvent(Event e)
+    {
+        _editingEvent = e;
+        _selectedTeamId = e.TeamId;
+        await OnTeamChanged();
+        _selectedPlayerId = e.PlayerId ?? 0;
+        _relatedPlayerId = e.RelatedPlayerId ?? 0;
+        _period = e.Period;
+        _selectedCategory = e.Category;
+        _selectedSubType = e.SubType;
+        _outcome = e.Outcome;
+        _note = e.Note ?? "";
+        _flagForPresentation = e.FlaggedForReview;
+        _currentX = e.X;
+        _currentY = e.Y;
+        _currentEndX = e.EndX;
+        _currentEndY = e.EndY;
+        _clipStartFrame = e.ClipStartFrame;
+        _clipEndFrame = e.ClipEndFrame;
+        _selectedQualifiers = Newtonsoft.Json.JsonConvert.DeserializeObject<List<string>>(e.QualifiersJson ?? "[]") ?? new();
+        await JumpToEvent(e);
+    }
+
+    private void CancelEditEvent()
+    {
+        _editingEvent = null;
+        _note = "";
+        _flagForPresentation = false;
+        _selectedQualifiers.Clear();
+    }
+
+    private async Task ToggleStarEvent(Event e)
+    {
+        e.FlaggedForReview = !e.FlaggedForReview;
+        Db.Events.Update(e);
+        await Db.SaveChangesAsync();
+        StateHasChanged();
+    }
+
+    private async Task ExportStarredMontage()
+    {
+        _isExportingMontage = true;
+        _exportedClipUrl = "";
+        _clipErrorMessage = "";
+        StateHasChanged();
+
+        try
+        {
+            var starredIds = _events.Where(e => e.FlaggedForReview).OrderBy(e => e.FrameNumber).Select(e => e.Id).ToList();
+            string path;
+
+            if (starredIds.Count > 0)
+            {
+                path = await ClipService.GenerateMultiEventClipAsync(starredIds, 4);
+                _exportedClipMessage = $"تم دمج فيلم المحاضرة ({starredIds.Count} لقطات مميزة ⭐) بنجاح!";
+            }
+            else if (_clipEndFrame > _clipStartFrame)
+            {
+                path = await ClipService.GenerateRangeClipAsync(MatchId, _clipStartFrame, _clipEndFrame);
+                _exportedClipMessage = $"تم قص وتصدير المقطع المحدد ({_clipStartFrame} إلى {_clipEndFrame}) بنجاح!";
+            }
+            else if (_events.Count > 0)
+            {
+                var allIds = _events.OrderBy(e => e.FrameNumber).Take(15).Select(e => e.Id).ToList();
+                path = await ClipService.GenerateMultiEventClipAsync(allIds, 4);
+                _exportedClipMessage = $"تم دمج فيلم لأحداث المباراة ({allIds.Count} لقطة) بنجاح!";
+            }
+            else
+            {
+                var fps = Match?.VideoFps ?? 25;
+                var startF = Math.Max(0, _currentFrame - 2 * fps);
+                var endF = _currentFrame + 3 * fps;
+                path = await ClipService.GenerateRangeClipAsync(MatchId, startF, endF);
+                _exportedClipMessage = "تم قص وتصدير لقطة مدتها 5 ثوانٍ حول الإطار الحالي بنجاح!";
+            }
+
+            _exportedClipUrl = $"/clips/{Path.GetFileName(path)}";
+        }
+        catch (Exception ex)
+        {
+            _clipErrorMessage = $"تعذر تصدير ملف الفيديو عبر FFmpeg: {ex.Message}";
+        }
+        finally
+        {
+            _isExportingMontage = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SaveEvent()
+    {
+        if (string.IsNullOrEmpty(_selectedCategory)) return;
+        if (_selectedTeamId == 0) return;
+
+        if (_editingEvent == null && _player != null && !_liveTimerRunning)
+        {
+            try
+            {
+                var liveFrame = await _player.GetCurrentFrame();
+                if (liveFrame > 0)
+                {
+                    _currentFrame = liveFrame;
+                    _currentTimeMs = (long)(_currentFrame * 1000.0 / (Match?.VideoFps ?? 25));
+                }
+            }
+            catch { }
+        }
+
+        var category = EventTaxonomy.GetCategory(_selectedCategory);
+        var subtype = category?.SubTypes.FirstOrDefault(s => s.Key == _selectedSubType);
+
+        // Capture Freeze Frame
+        string? freezePath = _editingEvent?.FreezeFramePath;
+        if ((subtype?.RequiresFreezeFrame == true || _flagForPresentation) && string.IsNullOrEmpty(freezePath))
+        {
+            string? base64 = null;
+            if (_multiPlayer != null)
+                base64 = await _multiPlayer.CaptureFrom(0, _currentFrame);
+            else if (_player != null)
+                base64 = await _player.CaptureFrameBase64(_currentFrame);
+
+            if (!string.IsNullOrEmpty(base64))
+            {
+                var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MatchAnalystPro", "freezes");
+                Directory.CreateDirectory(dir);
+                freezePath = Path.Combine(dir, $"ev_{Guid.NewGuid():N}.jpg");
+                await File.WriteAllBytesAsync(freezePath, Convert.FromBase64String(base64));
+            }
+        }
+
+        if (_editingEvent != null)
+        {
+            _editingEvent.TeamId = _selectedTeamId;
+            _editingEvent.PlayerId = _selectedPlayerId > 0 ? _selectedPlayerId : null;
+            _editingEvent.RelatedPlayerId = _relatedPlayerId > 0 ? _relatedPlayerId : null;
+            _editingEvent.Period = _period;
+            _editingEvent.Category = _selectedCategory;
+            _editingEvent.SubType = _selectedSubType;
+            _editingEvent.Outcome = _outcome;
+            _editingEvent.Note = _note;
+            _editingEvent.FlaggedForReview = _flagForPresentation;
+            _editingEvent.X = _currentX;
+            _editingEvent.Y = _currentY;
+            _editingEvent.EndX = _currentEndX;
+            _editingEvent.EndY = _currentEndY;
+            if (_clipStartFrame > 0) _editingEvent.ClipStartFrame = _clipStartFrame;
+            if (_clipEndFrame > _clipStartFrame) _editingEvent.ClipEndFrame = _clipEndFrame;
+            _editingEvent.QualifiersJson = Newtonsoft.Json.JsonConvert.SerializeObject(_selectedQualifiers);
+            _editingEvent.FreezeFramePath = freezePath;
+            _editingEvent.LastEditedAt = DateTime.UtcNow;
+
+            Db.Events.Update(_editingEvent);
+            await Db.SaveChangesAsync();
+            await Db.Entry(_editingEvent).Reference(e => e.Player).LoadAsync();
+            await Db.Entry(_editingEvent).Reference(e => e.Team).LoadAsync();
+            _editingEvent = null;
+        }
+        else
+        {
+            var ev = new Event
+            {
+                MatchId = MatchId,
+                TeamId = _selectedTeamId,
+                PlayerId = _selectedPlayerId > 0 ? _selectedPlayerId : null,
+                RelatedPlayerId = _relatedPlayerId > 0 ? _relatedPlayerId : null,
+                Period = _period,
+                FrameNumber = _currentFrame,
+                TimestampMs = _currentTimeMs,
+                Minute = (int)(_currentTimeMs / 60000),
+                Second = (int)((_currentTimeMs % 60000) / 1000),
+                Category = _selectedCategory,
+                SubType = _selectedSubType,
+                Outcome = _outcome,
+                Note = _note,
+                FlaggedForReview = _flagForPresentation,
+                X = _currentX,
+                Y = _currentY,
+                EndX = _currentEndX,
+                EndY = _currentEndY,
+                QualifiersJson = Newtonsoft.Json.JsonConvert.SerializeObject(_selectedQualifiers),
+                FreezeFramePath = freezePath,
+                ClipStartFrame = _clipStartFrame > 0 ? _clipStartFrame : Math.Max(0, _currentFrame - 75),
+                ClipEndFrame = _clipEndFrame > _clipStartFrame ? _clipEndFrame : _currentFrame + 75,
+            };
+
+            Db.Events.Add(ev);
+            await Db.SaveChangesAsync();
+
+            await Db.Entry(ev).Reference(e => e.Player).LoadAsync();
+            await Db.Entry(ev).Reference(e => e.Team).LoadAsync();
+
+            _events.Insert(0, ev);
+
+            if (_selectedCategory == "pass" && _outcome == "successful" && _relatedPlayerId > 0)
+            {
+                _selectedPlayerId = _relatedPlayerId;
+                _relatedPlayerId = 0;
+                if (_currentEndX.HasValue && _currentEndY.HasValue)
+                {
+                    _currentX = _currentEndX;
+                    _currentY = _currentEndY;
+                }
+            }
+        }
+
+        try
+        {
+            await PossessionService.BuildPossessionsAsync(MatchId);
+        }
+        catch { }
+
+        _note = "";
+        _flagForPresentation = false;
+        _outcome = "successful";
+        _selectedQualifiers.Clear();
+        _clipStartFrame = 0;
+        _clipEndFrame = 0;
+
+        if (_player != null)
+        {
+            await _player.SetVideoMarker(null, null, null, null, "", "");
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task DeleteEvent(Event e)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "هل أنت متأكد من حذف هذا الحدث؟")) return;
+        Db.Events.Remove(e);
+        await Db.SaveChangesAsync();
+        _events.Remove(e);
+        if (_editingEvent?.Id == e.Id) _editingEvent = null;
+
+        try
+        {
+            await PossessionService.BuildPossessionsAsync(MatchId);
+        }
+        catch { }
+
+        StateHasChanged();
+    }
+
+    private async Task GenerateClip(Event e)
+    {
+        _exportedClipUrl = "";
+        _clipErrorMessage = "";
+        StateHasChanged();
+        try
+        {
+            var path = await ClipService.GenerateEventClipAsync(e.Id, 5);
+            _exportedClipUrl = $"/clips/{Path.GetFileName(path)}";
+            _exportedClipMessage = $"تم تجهيز مقطع الحدث #{e.Id} ({e.Minute}':{e.Second:00}) بنجاح!";
+        }
+        catch (Exception ex)
+        {
+            _clipErrorMessage = $"تنبيه: {ex.Message}";
+        }
+        StateHasChanged();
+    }
+
+    private async Task JumpToEvent(Event e)
+    {
+        _currentFrame = e.FrameNumber;
+        _currentTimeMs = e.TimestampMs;
+        _clipStartFrame = e.ClipStartFrame > 0 ? e.ClipStartFrame : Math.Max(0, e.FrameNumber - 75);
+        _clipEndFrame = e.ClipEndFrame > _clipStartFrame ? e.ClipEndFrame : e.FrameNumber + 75;
+        if (_multiPlayer != null) await _multiPlayer.SeekAll(e.FrameNumber);
+        else if (_player != null) await _player.SeekToFrame(e.FrameNumber);
+        _currentX = e.X;
+        _currentY = e.Y;
+        _currentEndX = e.EndX;
+        _currentEndY = e.EndY;
+        StateHasChanged();
+    }
+
+    private IEnumerable<Event> FilteredEvents()
+    {
+        if (string.IsNullOrWhiteSpace(_searchTerm)) return _events;
+        var q = _searchTerm.ToLower();
+        return _events.Where(e =>
+            (e.Player?.NameAr?.ToLower().Contains(q) ?? false) ||
+            e.Category.ToLower().Contains(q) ||
+            e.SubType.ToLower().Contains(q) ||
+            (e.Note?.ToLower().Contains(q) ?? false));
+    }
+
+    [JSInvokable] public async Task SaveEventShortcut() { await SaveEvent(); }
+    [JSInvokable]
+    public async Task TogglePlay()
+    {
+        if (_multiPlayer != null)
+            _isVideoPlaying = await _multiPlayer.TogglePlay();
+        else if (_player != null)
+            _isVideoPlaying = await _player.TogglePlay();
+
+        if (!_isVideoPlaying && _player != null)
+        {
+            var f = await _player.GetCurrentFrame();
+            if (f > 0)
+            {
+                _currentFrame = f;
+                _currentTimeMs = (long)(f * 1000.0 / (Match?.VideoFps ?? 25));
+            }
+        }
+        StateHasChanged();
+    }
+    [JSInvokable] public async Task StepFrame(int delta) { await StepFrame((long)delta); }
+    [JSInvokable] public async Task SetClipStartShortcut() { await SetClipStartAsync(); }
+    [JSInvokable] public async Task SetClipEndShortcut() { await SetClipEndAsync(); }
+    [JSInvokable]
+    public void QuickCategory(int index)
+    {
+        if (index >= 1 && index <= EventTaxonomy.Categories.Count)
+        {
+            SelectCategory(EventTaxonomy.Categories[index - 1].Key);
+            StateHasChanged();
+        }
+    }
+
+    private static string GetShortName(string fullName)
+    {
+        if (string.IsNullOrWhiteSpace(fullName)) return "";
+        var parts = fullName.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length > 1 ? parts[^1] : fullName;
+    }
+
+    private static string FormatTime(long ms)
+    {
+        var s = ms / 1000;
+        return $"{s / 60:00}:{s % 60:00}";
+    }
+
+    private static string GetCategoryName(string key) =>
+        EventTaxonomy.GetCategory(key)?.Ar ?? key;
+
+    private static string GetCategoryColor(string key) =>
+        EventTaxonomy.GetCategory(key)?.Color ?? "#666";
+
+    private static string GetSubTypeName(string cat, string sub) =>
+        EventTaxonomy.GetSubType(cat, sub)?.Ar ?? sub;
+
+    private static string GetOutcomeAr(string o) => o switch
+    {
+        "successful" => "✓",
+        "failed" => "✗",
+        "key" => "★",
+        "goal" => "⚽",
+        _ => o
+    };
+
+    public async ValueTask DisposeAsync()
+    {
+        _liveTimerCts?.Cancel();
+        _liveTimer?.Dispose();
+        try
+        {
+            await JS.InvokeVoidAsync("Shortcuts.unregister");
+        }
+        catch { }
+        _shortcutsRef?.Dispose();
+    }
+}

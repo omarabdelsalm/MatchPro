@@ -1,0 +1,319 @@
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<div class="video-player-wrapper" style="display:flex; flex-direction:column; gap:6px;">
+    <!-- شريط أدوات التحليل المباشر فوق الفيديو (النقر للتصنيف + الرسم التكتيكي + الفتح الفوري) -->
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px; background:#0d1117; padding:6px 10px; border-radius:6px; border:1px solid var(--border-color); font-size:11px;">
+        <div style="display:flex; gap:4px; align-items:center; flex-wrap:wrap;">
+            <span style="color:var(--text-muted); font-weight:600;">وضع التفاعل مع الفيديو:</span>
+            <button type="button" class="@(_interactionMode == "tag" ? "primary" : "")"
+                    style="padding:3px 8px; font-size:11px;"
+                    @onclick='() => SetMode("tag")'>
+                🎯 نقر لتحديد موقع الحدث (X,Y)
+            </button>
+            <button type="button" class="@(_interactionMode == "draw" && _drawTool == "arrow" ? "primary" : "")"
+                    style="padding:3px 8px; font-size:11px;"
+                    @onclick='() => SetDrawTool("arrow")'>
+                ↗️ رسم سهم تكتيكي
+            </button>
+            <button type="button" class="@(_interactionMode == "draw" && _drawTool == "circle" ? "primary" : "")"
+                    style="padding:3px 8px; font-size:11px;"
+                    @onclick='() => SetDrawTool("circle")'>
+                ⭕ دائرة تركيز
+            </button>
+            <button type="button" class="@(_interactionMode == "draw" && _drawTool == "freehand" ? "primary" : "")"
+                    style="padding:3px 8px; font-size:11px;"
+                    @onclick='() => SetDrawTool("freehand")'>
+                ✏️ قلم حر
+            </button>
+            <button type="button" class="@(_interactionMode == "none" ? "primary" : "")"
+                    style="padding:3px 8px; font-size:11px;"
+                    @onclick='() => SetMode("none")'>
+                🖱️ تحكم عادي بالفيديو
+            </button>
+            <button type="button" style="padding:3px 8px; font-size:11px; color:#f85149;"
+                    @onclick="ClearOverlay">
+                🧹 مسح الرسم
+            </button>
+        </div>
+
+        <div style="display:flex; gap:6px; align-items:center;">
+            <label for="instantLocalVideo_@VideoId"
+                   style="background:#238636; color:#fff; padding:3px 10px; border-radius:5px; cursor:pointer; font-weight:700; font-size:11px; display:inline-flex; align-items:center; gap:4px;"
+                   title="فتح أي ملف فيديو من جهازك وتشغيله فوراً في المتصفح بدون انتظار الرفع">
+                ⚡ فتح فيديو فوري من جهازك
+            </label>
+            <input id="instantLocalVideo_@VideoId" type="file" accept="video/*" style="display:none;" @onchange="OnInstantLocalFileSelected" />
+        </div>
+    </div>
+
+    <div class="video-container" style="position:relative; background:#000; border-radius:6px; overflow:hidden; min-height:260px;">
+        <video id="@VideoId" src="@VideoSrc" controls preload="auto"
+               style="width:100%; max-height:52vh; display:block; background:#000;">
+        </video>
+
+        <!-- طبقة التفاعل التكتيكي فوق الفيديو (تترك شريط التحكم السفلي 42px متاحاً) -->
+        <canvas id="videoOverlay-@VideoId"
+                style="position:absolute; top:0; left:0; z-index:5; cursor:@(_interactionMode == "none" ? "default" : "crosshair"); pointer-events:@(_interactionMode == "none" ? "none" : "auto");"
+                width="640" height="320"></canvas>
+    </div>
+</div>
+
+@code {
+    [Parameter] public string VideoId { get; set; } = "mainVideo";
+    [Parameter] public string VideoSrc { get; set; } = "";
+    [Parameter] public int Fps { get; set; } = 25;
+    [Parameter] public bool ShowOverlay { get; set; } = true;
+    [Parameter] public EventCallback<long> OnFrameChanged { get; set; }
+    [Parameter] public EventCallback<(double VideoX, double VideoY, double XPct, double YPct, long Frame)> OnVideoPointClicked { get; set; }
+    [Parameter] public EventCallback<string> OnLocalVideoLoaded { get; set; }
+
+    private DotNetObjectReference<FrameVideoPlayer>? _ref;
+    private int _playerId = -1;
+    private string _lastInitializedSrc = "";
+    private int _lastFps = 25;
+    private string _interactionMode = "tag";
+    private string _drawTool = "arrow";
+    private string _drawColor = "#eab308";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender || _playerId <= 0 || _lastInitializedSrc != VideoSrc || _lastFps != Fps)
+        {
+            await InitializePlayerAsync();
+        }
+    }
+
+    private async Task InitializePlayerAsync()
+    {
+        try
+        {
+            _ref ??= DotNetObjectReference.Create(this);
+            _playerId = await JS.InvokeAsync<int>("FramePlayer.create", VideoId, Fps);
+            if (_playerId > 0)
+            {
+                _lastInitializedSrc = VideoSrc;
+                _lastFps = Fps;
+                await JS.InvokeVoidAsync("FramePlayer.attachTimeListener", _playerId, _ref);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[FrameVideoPlayer] init error: {ex.Message}");
+        }
+
+        try
+        {
+            if (_playerId > 0)
+            {
+                await JS.InvokeVoidAsync("FramePlayer.setInteractionMode", _playerId, _interactionMode, _drawTool, _drawColor);
+            }
+        }
+        catch { }
+    }
+
+    private async Task SetMode(string mode)
+    {
+        _interactionMode = mode;
+        try
+        {
+            if (_playerId > 0)
+                await JS.InvokeVoidAsync("FramePlayer.setInteractionMode", _playerId, _interactionMode, _drawTool, _drawColor);
+        }
+        catch { }
+    }
+
+    private async Task SetDrawTool(string tool)
+    {
+        _interactionMode = "draw";
+        _drawTool = tool;
+        try
+        {
+            if (_playerId > 0)
+                await JS.InvokeVoidAsync("FramePlayer.setInteractionMode", _playerId, _interactionMode, _drawTool, _drawColor);
+        }
+        catch { }
+    }
+
+    public async Task ClearOverlay()
+    {
+        try
+        {
+            if (_playerId > 0)
+                await JS.InvokeVoidAsync("FramePlayer.clearDrawings", _playerId);
+        }
+        catch { }
+    }
+
+    public async Task SetVideoMarker(double? xPct, double? yPct, double? endXPct, double? endYPct, string color, string label)
+    {
+        try
+        {
+            if (_playerId > 0)
+                await JS.InvokeVoidAsync("FramePlayer.setVideoMarker", _playerId, xPct, yPct, endXPct, endYPct, color, label);
+        }
+        catch { }
+    }
+
+    private async Task OnInstantLocalFileSelected(ChangeEventArgs e)
+    {
+        try
+        {
+            var script = $"(function(){{ const inp=document.getElementById('instantLocalVideo_{VideoId}'); const v=document.getElementById('{VideoId}')||document.querySelector('video'); if(!inp||!inp.files||!inp.files.length||!v) return ''; const f=inp.files[0]; v.src=URL.createObjectURL(f); v.load(); return f.name; }})()";
+            var fileName = await JS.InvokeAsync<string>("eval", script);
+            if (!string.IsNullOrEmpty(fileName))
+            {
+                await InitializePlayerAsync();
+                if (OnLocalVideoLoaded.HasDelegate)
+                {
+                    await OnLocalVideoLoaded.InvokeAsync(fileName);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[FrameVideoPlayer] local blob error: {ex.Message}");
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnFrameUpdate(long frame)
+    {
+        await OnFrameChanged.InvokeAsync(frame);
+    }
+
+    [JSInvokable]
+    public async Task OnVideoClicked(double videoX, double videoY, double xPct, double yPct, long frame)
+    {
+        await OnFrameChanged.InvokeAsync(frame);
+        if (OnVideoPointClicked.HasDelegate)
+        {
+            await OnVideoPointClicked.InvokeAsync((videoX, videoY, xPct, yPct, frame));
+        }
+    }
+
+    /// <summary>
+    /// تشغيل أو إيقاف الفيديو مباشرة عبر عنصر DOM لضمان العمل حتى لو كان ملف JS مخزناً في الكاش القديم
+    /// </summary>
+    public async Task<bool> TogglePlay()
+    {
+        try
+        {
+            var script = $"(function(){{ const v = document.getElementById('{VideoId}') || document.querySelector('video'); if(!v) return false; if(v.paused){{ v.play().catch(()=>{{}}); return true; }} else {{ v.pause(); return false; }} }})()";
+            return await JS.InvokeAsync<bool>("eval", script);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// تحريك الفيديو بعدد محدد من الإطارات (للأمام أو للخلف) مباشرة على عنصر الفيديو الفعلي وإرجاع الإطار الجديد
+    /// </summary>
+    public async Task<long> StepFramesDirect(long deltaFrames)
+    {
+        try
+        {
+            var fps = Fps > 0 ? Fps : 25;
+            var script = $"(function(){{ const v = document.getElementById('{VideoId}') || document.querySelector('video'); if(!v) return 0; if(!v.paused) v.pause(); const fps = {fps}; const cur = v.currentTime || 0; let next = Math.max(0, cur + ({deltaFrames} / fps)); if(v.duration && !isNaN(v.duration)) next = Math.min(v.duration, next); v.currentTime = next; return Math.round(next * fps); }})()";
+            return await JS.InvokeAsync<long>("eval", script);
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    public async Task SeekToFrame(long frame)
+    {
+        try
+        {
+            var fps = Fps > 0 ? Fps : 25;
+            var targetSec = (frame / (double)fps).ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
+            var script = $"(function(){{ const v = document.getElementById('{VideoId}') || document.querySelector('video'); if(!v) return; const applySeek = () => {{ v.currentTime = {targetSec}; }}; if(v.readyState >= 1) applySeek(); else v.addEventListener('loadedmetadata', applySeek, {{ once: true }}); }})()";
+            await JS.InvokeVoidAsync("eval", script);
+        }
+        catch { }
+    }
+
+    public async Task<long> GetCurrentFrame()
+    {
+        try
+        {
+            var fps = Fps > 0 ? Fps : 25;
+            var script = $"(function(){{ const v = document.getElementById('{VideoId}') || document.querySelector('video'); return v ? Math.round((v.currentTime || 0) * {fps}) : 0; }})()";
+            return await JS.InvokeAsync<long>("eval", script);
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    public async Task<long> GetCurrentTimeMs()
+    {
+        try
+        {
+            var script = $"(function(){{ const v = document.getElementById('{VideoId}') || document.querySelector('video'); return v ? Math.round((v.currentTime || 0) * 1000) : 0; }})()";
+            return await JS.InvokeAsync<long>("eval", script);
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    public async Task<string?> CaptureFrameBase64(long frame)
+    {
+        try
+        {
+            var script = $"(function(){{ const v = document.getElementById('{VideoId}') || document.querySelector('video'); if(!v) return null; const c = document.createElement('canvas'); c.width = v.videoWidth || 640; c.height = v.videoHeight || 360; const ctx = c.getContext('2d'); if(v.readyState >= 2) {{ ctx.drawImage(v, 0, 0, c.width, c.height); const ov = document.getElementById('videoOverlay-{VideoId}'); if(ov && ov.width > 0 && ov.height > 0) ctx.drawImage(ov, 0, 0, c.width, c.height); }} return c.toDataURL('image/jpeg', 0.85).split(',')[1]; }})()";
+            return await JS.InvokeAsync<string?>("eval", script);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// تشغيل مقطع محدد من startFrame إلى endFrame دون تجميد واجهة المستخدم
+    /// </summary>
+    public async Task PlayRange(long startFrame, long endFrame)
+    {
+        try
+        {
+            var fps = Fps > 0 ? Fps : 25;
+            var startSec = (startFrame / (double)fps).ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
+            var endSec = (endFrame / (double)fps).ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
+            var script = $"(function(){{ const v = document.getElementById('{VideoId}') || document.querySelector('video'); if(!v) return; if(v._rangeCheck) v.removeEventListener('timeupdate', v._rangeCheck); v.currentTime = {startSec}; v._rangeCheck = function(){{ if(v.currentTime >= {endSec}){{ v.pause(); v.removeEventListener('timeupdate', v._rangeCheck); }} }}; v.addEventListener('timeupdate', v._rangeCheck); v.play().catch(()=>{{}}); }})()";
+            await JS.InvokeVoidAsync("eval", script);
+        }
+        catch { }
+    }
+
+    public async Task SetPlaybackRate(double rate)
+    {
+        try
+        {
+            var rateStr = rate.ToString("F2", System.Globalization.CultureInfo.InvariantCulture);
+            var script = $"(function(){{ const v = document.getElementById('{VideoId}') || document.querySelector('video'); if(v) v.playbackRate = {rateStr}; }})()";
+            await JS.InvokeVoidAsync("eval", script);
+        }
+        catch { }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_playerId > 0)
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("FramePlayer.dispose", _playerId);
+            }
+            catch { }
+        }
+        _ref?.Dispose();
+    }
+}

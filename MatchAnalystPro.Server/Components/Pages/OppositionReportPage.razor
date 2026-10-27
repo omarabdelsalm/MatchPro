@@ -1,0 +1,281 @@
+@page "/report"
+@page "/report/{MatchId:int}"
+@using MatchAnalystPro.Server.Data
+@using MatchAnalystPro.Server.Services
+@using MatchAnalystPro.Server.Models
+@inject AppDbContext Db
+@inject ReportService ReportService
+@inject IJSRuntime JS
+
+<div class="report-page">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
+        <h2 style="margin:0;">📄 تقرير سكاوتنج الخصم التكتيكي (Scouting Report)</h2>
+        <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-size:12px; color:#8b949e;">المباراة:</span>
+            <select value="@MatchId" @onchange="OnMatchChanged"
+                    style="background:#161b22; border:1px solid #388bfd; color:#58a6ff; font-weight:700; padding:4px 10px; border-radius:6px; font-size:12px; cursor:pointer;">
+                @foreach (var m in _matches)
+                {
+                    <option value="@m.Id">#@m.Id: @(m.HomeTeam?.NameAr ?? "مضيف") ضد @(m.AwayTeam?.NameAr ?? "ضيف")</option>
+                }
+            </select>
+        </div>
+    </div>
+
+    @if (_match != null)
+    {
+        <div class="report-form">
+            <div class="grid-2">
+                <div class="field-group">
+                    <label>الرسم التكتيكي (Formation)</label>
+                    <input @bind="_report.Formation" placeholder="مثال: 4-2-3-1" />
+                </div>
+                <div class="field-group">
+                    <label>اسم المحلل الفني</label>
+                    <input @bind="_report.AnalystName" placeholder="اسمك" />
+                </div>
+            </div>
+
+            <div class="field-group">
+                <label>1. البناء من الخلف (Build-Up)</label>
+                <textarea @bind="_report.BuildUpNotes" rows="3" placeholder="ملاحظات بداية الهجمة وتدوير الكرة..."></textarea>
+            </div>
+            <div class="field-group">
+                <label>2. الضغط والضغط المضاد (Pressing)</label>
+                <textarea @bind="_report.PressingNotes" rows="3" placeholder="ارتفاع خط الضغط ومحفزات استعادة الكرة..."></textarea>
+            </div>
+            <div class="field-group">
+                <label>3. الأنماط الهجومية (Attacking Patterns)</label>
+                <textarea @bind="_report.AttackingPatterns" rows="3" placeholder="التحركات العكسية والعرضيات والزيادة العددية..."></textarea>
+            </div>
+            <div class="field-group">
+                <label>4. نقاط الضعف الدفاعية (Defensive Weaknesses)</label>
+                <textarea @bind="_report.DefensiveWeaknesses" rows="3" placeholder="المساحات القابلة للاختراق..."></textarea>
+            </div>
+            <div class="field-group">
+                <label>5. الكرات الثابتة (Set Pieces)</label>
+                <textarea @bind="_report.SetPieceNotes" rows="2" placeholder="الركنيات، الركلات الحرة المباشرة وغير المباشرة..."></textarea>
+            </div>
+            <div class="field-group">
+                <label>6. ملاحظات اللاعبين المفاتيح</label>
+                <textarea @bind="_report.KeyPlayersNotes" rows="2" placeholder="أبرز عناصر الخطورة في المنافس..."></textarea>
+            </div>
+
+            @if (_topPlayers.Count > 0)
+            {
+                <div class="field-group">
+                    <label>تحديد اللاعبين المفاتيح لتضمينهم في التقرير</label>
+                    <div class="players-selector">
+                        @foreach (var p in _topPlayers)
+                        {
+                            <label class="player-chip @(_selectedPlayerIds.Contains(p.Id) ? "selected" : "")">
+                                <input type="checkbox" 
+                                       checked="@_selectedPlayerIds.Contains(p.Id)"
+                                       @onchange="e => TogglePlayer(p.Id, (bool)e.Value!)" />
+                                @p.ShirtNumber - @p.NameAr (@p.Position)
+                            </label>
+                        }
+                    </div>
+                </div>
+            }
+
+            <div class="button-row" style="flex-wrap:wrap; gap:10px;">
+                <button @onclick="SaveReport" class="btn-save">💾 حفظ التقرير</button>
+                <button type="button" @onclick="GenerateSmartDraft" style="background:#1f6feb; border:1px solid #388bfd; color:#fff; padding:10px 16px; font-weight:bold; border-radius:6px; cursor:pointer;">
+                    ⚡ توليد مسودة ذكية تلقائياً من أحداث المباراة
+                </button>
+                <button @onclick="GeneratePdf" class="btn-pdf" disabled="@_generating">
+                    @(_generating ? "⏳ جاري التوليد..." : "📄 تصدير تقرير PDF احترافي")
+                </button>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public int MatchId { get; set; } = 1;
+
+    private Match? _match;
+    private List<Match> _matches = new();
+    private OppositionReport _report = new();
+    private List<Event> _events = new();
+    private List<Player> _topPlayers = new();
+    private HashSet<int> _selectedPlayerIds = new();
+    private bool _generating = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_match == null || _match.Id != MatchId)
+        {
+            await LoadDataAsync();
+        }
+    }
+
+    private async Task OnMatchChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var id) && id != MatchId)
+        {
+            MatchId = id;
+            await LoadDataAsync();
+        }
+    }
+
+    private async Task LoadDataAsync()
+    {
+        _matches = await Db.Matches.Include(m => m.HomeTeam).Include(m => m.AwayTeam).OrderByDescending(m => m.Date).ToListAsync();
+        _match = _matches.FirstOrDefault(m => m.Id == MatchId) ?? _matches.FirstOrDefault();
+
+        if (_match == null) return;
+        MatchId = _match.Id;
+
+        _events = await Db.Events
+            .Include(e => e.Player)
+            .Where(e => e.MatchId == MatchId)
+            .ToListAsync();
+
+        var existingReport = await Db.OppositionReports.FirstOrDefaultAsync(r => r.MatchId == MatchId);
+        if (existingReport != null)
+        {
+            _report = existingReport;
+        }
+        else
+        {
+            _report = new OppositionReport
+            {
+                MatchId = MatchId,
+                OpponentTeamId = _match.AwayTeamId,
+                Formation = "4-2-3-1",
+                AnalystName = "محلل الأداء"
+            };
+            ApplySmartDraftNotes();
+        }
+
+        // احسب أكثر اللاعبين نشاطاً
+        _topPlayers = _events
+            .Where(e => e.PlayerId != null && e.Player != null)
+            .GroupBy(e => e.PlayerId!.Value)
+            .OrderByDescending(g => g.Count())
+            .Take(10)
+            .Select(g => g.First().Player!)
+            .ToList();
+
+        _selectedPlayerIds.Clear();
+        foreach (var p in _topPlayers.Take(3))
+        {
+            _selectedPlayerIds.Add(p.Id);
+        }
+    }
+
+    private void GenerateSmartDraft()
+    {
+        ApplySmartDraftNotes();
+        StateHasChanged();
+    }
+
+    private void ApplySmartDraftNotes()
+    {
+        if (_match == null) return;
+        var oppTeam = _match.AwayTeam?.NameAr ?? "المنافس";
+        var homeTeam = _match.HomeTeam?.NameAr ?? "فريقنا";
+
+        var oppEvents = _events.Where(e => e.TeamId == _match.AwayTeamId).ToList();
+        var passes = oppEvents.Where(e => e.Category == "pass").ToList();
+        var successfulPasses = passes.Count(p => p.Outcome == "successful");
+        var passAcc = passes.Count > 0 ? (int)Math.Round((double)successfulPasses * 100.0 / passes.Count) : 0;
+
+        int leftAttacks = oppEvents.Count(e => e.Y >= 66.0 && e.X >= 50.0);
+        int rightAttacks = oppEvents.Count(e => e.Y <= 34.0 && e.X >= 50.0);
+        int centralAttacks = oppEvents.Count(e => e.Y > 34.0 && e.Y < 66.0 && e.X >= 50.0);
+
+        string dominantFlank = leftAttacks > rightAttacks ? "الجناح الأيسر" : (rightAttacks > leftAttacks ? "الجناح الأيمن" : "عمق الملعب");
+
+        var shots = oppEvents.Where(e => e.Category == "shot").ToList();
+        var fouls = oppEvents.Count(e => e.Category == "foul");
+        var defLosses = oppEvents.Count(e => (e.Outcome == "failed" || e.Category == "turnover") && e.X <= 40.0);
+
+        _report.BuildUpNotes = passes.Count > 0
+            ? $"يعتمد {oppTeam} في بناء الهجمة على التمرير القصير بنسبة نجاح بلغت {passAcc}% ({successfulPasses}/{passes.Count} تمريرة)، مع محاولات الخروج بالكرة نحو الأطراف لتفادي ضغط {homeTeam}."
+            : $"بناء اللعب لفريق {oppTeam} يعتمد على التحضير الحذر من الخلف مع تقدم قلبي الدفاع للأمام.";
+
+        _report.PressingNotes = defLosses > 0
+            ? $"تطبيق ضغط متقطع في الثلث الأوسط، مع ارتكاب الفريق لـ {defLosses} أخطاء فقدان استحواذ في الثلث الدفاعي عند تطبيق الضغط العالي عليه."
+            : $"كتلة دفاعية متوسطة مع تراجع خط الوسط لحماية العمق وإغلاق زوايا التمرير البينية.";
+
+        _report.AttackingPatterns = oppEvents.Count > 0
+            ? $"الاعتماد الهجومي الأبرز موجه نحو ({dominantFlank}) بواقع تدرج سريع بالكرة ومحاولة استغلال المساحات خلف الأظهرة، مع تسجيل {shots.Count} تسديدات."
+            : $"تنويع بين الكرات العرضية السريعة والكرات البينية الطولية نحو المهاجم الصريح.";
+
+        _report.DefensiveWeaknesses = defLosses > 0
+            ? $"هشاشة دفاعية واضحة تحت الضغط الموجه في مناطقه الخلفية ({defLosses} كرات مقطوعة)، مع بطء في ارتداد الأظهرة للمساندة الدفاعية."
+            : $"مساحات شاغرة بين خط الدفاع والوسط (Zone 14) تتيح التمرير والتسديد المباشر من حدود منطقة الجزاء.";
+
+        _report.SetPieceNotes = fouls > 0
+            ? $"ارتكب الفريق {fouls} أخطاء تمنحنا فرصة الاستفادة من الكرات الثابتة. دفاعياً يفضلون الرقابة الفردية المختلطة داخل الـ 6 ياردات."
+            : $"تنفيذ الكرات الثابتة بدقة نحو القائم الأول، مع التزام دفاعي بالتغطية العكسية.";
+
+        _report.KeyPlayersNotes = _topPlayers.Count > 0
+            ? $"أبرز عناصر الخطورة: {_topPlayers.First().NameAr} ({_topPlayers.First().Position}) صاحب أعلى معدل لمس وتمرير للكرة، يليه {string.Join(" و ", _topPlayers.Skip(1).Take(2).Select(p => p.NameAr))}."
+            : "اللاعب رقم 10 في خط الوسط كصانع لعب رئيسي، والمهاجم رقم 9 كمحطة إنهاء.";
+    }
+
+    private void TogglePlayer(int id, bool on)
+    {
+        if (on) _selectedPlayerIds.Add(id);
+        else _selectedPlayerIds.Remove(id);
+    }
+
+    private async Task SaveReport()
+    {
+        if (_report.Id == 0) Db.OppositionReports.Add(_report);
+        else Db.OppositionReports.Update(_report);
+        await Db.SaveChangesAsync();
+        await JS.InvokeVoidAsync("alert", "✅ تم حفظ التقرير بنجاح");
+    }
+
+    private async Task GeneratePdf()
+    {
+        _generating = true;
+        await SaveReport();
+        
+        try
+        {
+            var keyPlayers = _topPlayers.Where(p => _selectedPlayerIds.Contains(p.Id)).ToList();
+            var pdf = ReportService.GenerateOppositionReport(_match!, _report, _events, keyPlayers);
+            var base64 = Convert.ToBase64String(pdf);
+
+            await JS.InvokeVoidAsync("PitchOverlay.downloadDataUri",
+                $"scouting_report_{_match!.Id}_{DateTime.Now:yyyyMMdd}.pdf",
+                $"data:application/pdf;base64,{base64}");
+        }
+        catch (Exception ex)
+        {
+            await JS.InvokeVoidAsync("alert", $"خطأ في إنشاء ملف PDF: {ex.Message}");
+        }
+        finally
+        {
+            _generating = false;
+        }
+    }
+}
+
+<style>
+    .report-page { padding: 16px 20px; max-width: 950px; margin: 0 auto; height: 100vh; overflow-y: auto; }
+    .report-form { background: #161b22; padding: 20px; border-radius: 8px; border: 1px solid var(--border-color); }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .field-group { margin-bottom: 12px; }
+    .field-group label { display: block; font-size: 12px; color: #8b949e; margin-bottom: 4px; font-weight: 600; }
+    .field-group input, .field-group textarea { width: 100%; background: #0d1117; color: #e6edf3;
+        border: 1px solid #30363d; border-radius: 6px; padding: 8px; font-family: inherit; font-size: 13px; }
+    .players-selector { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px; background: #0d1117; border-radius: 6px; border: 1px solid #30363d; }
+    .player-chip { background: #21262d; padding: 5px 12px; border-radius: 16px;
+        cursor: pointer; font-size: 12px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid #30363d; }
+    .player-chip.selected { background: #1f6feb; border-color: #58a6ff; font-weight: bold; }
+    .button-row { display: flex; gap: 12px; margin-top: 16px; }
+    .btn-save { background: #238636; border-color: #2ea043; padding: 10px 20px; font-weight: bold; }
+    .btn-pdf { background: #C8102E; border-color: #e02444; padding: 10px 20px; font-weight: bold; }
+</style>

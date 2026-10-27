@@ -1,0 +1,75 @@
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<div class="multi-camera-grid" style="display:grid; grid-template-columns:@GridColumns; gap:6px; background:#0d1117; padding:6px; border-radius:6px; border:1px solid var(--border-color);">
+    @foreach (var (cam, idx) in Cameras.Select((c, i) => (c, i)))
+    {
+        <div class="camera-cell" style="position:relative; background:#000; border-radius:4px; overflow:hidden;">
+            <div class="camera-label" style="position:absolute; top:6px; left:6px; 
+                 background:rgba(0,0,0,0.75); color:#58a6ff; font-weight:bold; padding:2px 8px; 
+                 border-radius:4px; font-size:11px; z-index:10; border:1px solid rgba(255,255,255,0.2);">
+                @cam.Name
+            </div>
+            <video id="@cam.ElementId" src="@cam.Src" controls preload="metadata" style="width:100%; display:block; max-height:45vh;">
+            </video>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public List<CameraSource> Cameras { get; set; } = new();
+    [Parameter] public string MasterId { get; set; } = "";
+    [Parameter] public int Fps { get; set; } = 25;
+    [Parameter] public EventCallback<long> OnFrameChanged { get; set; }
+    [Parameter] public string GridColumns { get; set; } = "1fr 1fr";
+
+    private string _groupId = "group_" + Guid.NewGuid().ToString("N");
+    private DotNetObjectReference<MultiCameraPlayer>? _ref;
+    private int _lastCameraCount = 0;
+
+    public record CameraSource(string Name, string Src, string ElementId);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (Cameras.Count == 0) return;
+        if (!firstRender && _lastCameraCount == Cameras.Count) return;
+        try
+        {
+            _lastCameraCount = Cameras.Count;
+            var ids = Cameras.Select(c => c.ElementId).ToArray();
+            var master = string.IsNullOrEmpty(MasterId) ? ids.FirstOrDefault() : MasterId;
+            
+            await JS.InvokeVoidAsync("MultiCamera.create", _groupId, ids, master);
+            
+            _ref ??= DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("MultiCamera.attachTimeListener", _groupId, Fps, _ref);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[MultiCameraPlayer] OnAfterRender error: {ex.Message}");
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnFrame(long frame) => await OnFrameChanged.InvokeAsync(frame);
+
+    public async Task<bool> TogglePlay() =>
+        await JS.InvokeAsync<bool>("MultiCamera.togglePlay", _groupId);
+
+    public async Task SeekAll(long frame) =>
+        await JS.InvokeVoidAsync("MultiCamera.seekAll", _groupId, frame, Fps);
+
+    public async Task<string?> CaptureFrom(int cameraIndex, long frame) =>
+        await JS.InvokeAsync<string?>("MultiCamera.captureFromCamera", 
+            _groupId, cameraIndex, frame, Fps);
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("MultiCamera.dispose", _groupId);
+        }
+        catch { }
+        _ref?.Dispose();
+    }
+}

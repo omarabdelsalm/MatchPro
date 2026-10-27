@@ -1,0 +1,182 @@
+@page "/export"
+@page "/export/{MatchId:int}"
+@inject AppDbContext Db
+@inject StatsBombExporter StatsBombSvc
+@inject OptaExporter OptaSvc
+@inject WyscoutExporter WyscoutSvc
+@inject IJSRuntime JS
+
+<div class="content-wrapper">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:10px;">
+        <div>
+            <h1 class="page-title" style="margin:0;">📤 مركز التصدير الموحد (Export Center)</h1>
+            <p style="margin:4px 0 0 0; color:var(--text-muted); font-size:13px;">تصدير بيانات وأحداث المباراة بصيغ عالمية متوافقة مع StatsBomb, Opta, و Wyscout</p>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-size:12px; color:#8b949e;">المباراة:</span>
+            <select value="@MatchId" @onchange="OnMatchChanged"
+                    style="background:#161b22; border:1px solid #388bfd; color:#58a6ff; font-weight:700; padding:6px 12px; border-radius:6px; font-size:12px; cursor:pointer;">
+                @foreach (var m in _matches)
+                {
+                    <option value="@m.Id">#@m.Id: @(m.HomeTeam?.NameAr ?? "مضيف") ضد @(m.AwayTeam?.NameAr ?? "ضيف")</option>
+                }
+            </select>
+            <span class="badge badge-info" style="font-size:13px;">
+                @_events.Count حدث مسجل
+            </span>
+        </div>
+    </div>
+
+    <!-- بطاقات اختيار صيغة التصدير -->
+    <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:16px; margin-bottom:20px;">
+        <div class="card" style="border-color:@(_format == "statsbomb" ? "var(--color-primary)" : "var(--border-color)"); cursor:pointer;"
+             @onclick='() => SelectFormat("statsbomb")'>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                <span style="font-weight:700; font-size:15px; color:#58a6ff;">StatsBomb JSON</span>
+                <span class="badge badge-info">JSON v3</span>
+            </div>
+            <p style="font-size:12px; color:var(--text-muted); margin:0 0 12px 0;">
+                المعيار الأكثر شمولاً وتفصيلاً، يشمل الإحداثيات، الحيازات، والخصائص التكتيكية الكاملة.
+            </p>
+            <button class="@(_format == "statsbomb" ? "primary" : "")" style="width:100%;">
+                @(_format == "statsbomb" ? "✓ تم الاختيار" : "تحديد StatsBomb")
+            </button>
+        </div>
+
+        <div class="card" style="border-color:@(_format == "opta" ? "var(--color-primary)" : "var(--border-color)"); cursor:pointer;"
+             @onclick='() => SelectFormat("opta")'>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                <span style="font-weight:700; font-size:15px; color:#3fb950;">Opta F24 CSV</span>
+                <span class="badge badge-success">CSV</span>
+            </div>
+            <p style="font-size:12px; color:var(--text-muted); margin:0 0 12px 0;">
+                تنسيق F24 المعياري المستخدم في القنوات التلفزيونية والتقارير الرياضية العالمية.
+            </p>
+            <button class="@(_format == "opta" ? "primary" : "")" style="width:100%;">
+                @(_format == "opta" ? "✓ تم الاختيار" : "تحديد Opta")
+            </button>
+        </div>
+
+        <div class="card" style="border-color:@(_format == "wyscout" ? "var(--color-primary)" : "var(--border-color)"); cursor:pointer;"
+             @onclick='() => SelectFormat("wyscout")'>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                <span style="font-weight:700; font-size:15px; color:#d29922;">Wyscout CSV</span>
+                <span class="badge badge-warning">CSV</span>
+            </div>
+            <p style="font-size:12px; color:var(--text-muted); margin:0 0 12px 0;">
+                تنسيق منصة وايسكاوت للأندية والكشافين لتحليل الأداء الفردي والجماعي.
+            </p>
+            <button class="@(_format == "wyscout" ? "primary" : "")" style="width:100%;">
+                @(_format == "wyscout" ? "✓ تم الاختيار" : "تحديد Wyscout")
+            </button>
+        </div>
+    </div>
+
+    <!-- نافذة المعاينة والتحميل -->
+    <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+            <h2 class="card-title" style="margin:0;">معاينة البيانات المصدرة (@_format.ToUpper())</h2>
+            <div style="display:flex; gap:8px;">
+                <button class="primary" @onclick="DownloadExport">📥 تحميل الملف (@GetFileExtension())</button>
+                <button @onclick="CopyContent">📋 نسخ المحتوى</button>
+            </div>
+        </div>
+
+        <textarea readonly style="width:100%; height:380px; font-family:'Consolas', monospace; font-size:12px; direction:ltr; text-align:left; background:var(--bg-input); border-radius:6px; padding:10px; resize:vertical;"
+                  value="@_exportedContent"></textarea>
+    </div>
+</div>
+
+@code {
+    [Parameter] public int MatchId { get; set; } = 1;
+
+    private Match? Match;
+    private List<Match> _matches = new();
+    private List<Event> _events = new();
+    private string _format = "statsbomb";
+    private string _exportedContent = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Match == null || Match.Id != MatchId)
+        {
+            await LoadDataAsync();
+        }
+    }
+
+    private async Task OnMatchChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var id) && id != MatchId)
+        {
+            MatchId = id;
+            await LoadDataAsync();
+        }
+    }
+
+    private async Task LoadDataAsync()
+    {
+        _matches = await Db.Matches.Include(m => m.HomeTeam).Include(m => m.AwayTeam).OrderByDescending(m => m.Date).ToListAsync();
+        Match = _matches.FirstOrDefault(m => m.Id == MatchId) ?? _matches.FirstOrDefault();
+
+        if (Match != null)
+        {
+            MatchId = Match.Id;
+            _events = await Db.Events
+                .Include(e => e.Player)
+                .Include(e => e.Team)
+                .Where(e => e.MatchId == Match.Id)
+                .OrderBy(e => e.FrameNumber)
+                .ToListAsync();
+
+            GenerateExport();
+        }
+    }
+
+    private void SelectFormat(string format)
+    {
+        _format = format;
+        GenerateExport();
+    }
+
+    private void GenerateExport()
+    {
+        if (Match == null) return;
+        _exportedContent = _format switch
+        {
+            "statsbomb" => StatsBombSvc.Export(Match, _events),
+            "opta" => OptaSvc.Export(Match, _events),
+            "wyscout" => WyscoutSvc.Export(Match, _events),
+            _ => ""
+        };
+    }
+
+    private string GetFileExtension() => _format == "statsbomb" ? "JSON" : "CSV";
+
+    private async Task DownloadExport()
+    {
+        var fileName = $"match_{MatchId}_{_format}_{DateTime.UtcNow:yyyyMMdd_HHmmss}.{(_format == "statsbomb" ? "json" : "csv")}";
+        var mime = _format == "statsbomb" ? "application/json" : "text/csv";
+        var bytes = System.Text.Encoding.UTF8.GetBytes(_exportedContent);
+        var base64 = Convert.ToBase64String(bytes);
+
+        try
+        {
+            await JS.InvokeVoidAsync("PitchOverlay.downloadDataUri", fileName, $"data:{mime};charset=utf-8;base64,{base64}");
+        }
+        catch (Exception ex)
+        {
+            await JS.InvokeVoidAsync("alert", $"خطأ في التنزيل: {ex.Message}");
+        }
+    }
+
+    private async Task CopyContent()
+    {
+        await JS.InvokeVoidAsync("navigator.clipboard.writeText", _exportedContent);
+        await JS.InvokeVoidAsync("alert", "تم نسخ المحتوى بنجاح إلى الحافظة!");
+    }
+}

@@ -1,0 +1,149 @@
+@using MatchAnalystPro.Server.Models
+@using MatchAnalystPro.Server.Taxonomy
+
+<div class="tag-panel-inner">
+    <!-- الفريق واللاعب -->
+    <div class="field-group">
+        <label>الفريق</label>
+        <select @bind="SelectedTeamId" @bind:after="OnTeamChanged">
+            <option value="0">-- اختر الفريق --</option>
+            @if (HomeTeam != null)
+            {
+                <option value="@HomeTeam.Id">@HomeTeam.NameAr</option>
+            }
+            @if (AwayTeam != null)
+            {
+                <option value="@AwayTeam.Id">@AwayTeam.NameAr</option>
+            }
+        </select>
+    </div>
+
+    <div class="field-group">
+        <label>اللاعب</label>
+        <select @bind="SelectedPlayerId">
+            <option value="0">-- اختر اللاعب --</option>
+            @foreach (var p in Players)
+            {
+                <option value="@p.Id">@p.ShirtNumber - @p.NameAr (@p.Position)</option>
+            }
+        </select>
+    </div>
+
+    <!-- الفئات -->
+    <div class="categories-section">
+        <label>فئة الحدث</label>
+        <div class="category-grid">
+            @foreach (var (cat, idx) in EventTaxonomy.Categories.Select((c, i) => (c, i + 1)))
+            {
+                <button type="button" class="cat-btn @(SelectedCategory == cat.Key ? "selected" : "")"
+                        style="border-color:@cat.Color"
+                        @onclick="() => SelectCategory(cat.Key)">
+                    <span class="key-hint">@idx</span>
+                    @cat.Ar
+                </button>
+            }
+        </div>
+    </div>
+
+    <!-- الأنواع الفرعية -->
+    @if (!string.IsNullOrEmpty(SelectedCategory))
+    {
+        var cat = EventTaxonomy.GetCategory(SelectedCategory);
+        if (cat != null)
+        {
+            <div class="subtypes-section">
+                <label>النوع الفرعي</label>
+                <div class="subtype-grid">
+                    @foreach (var st in cat.SubTypes)
+                    {
+                        <button type="button" class="subtype-btn @(SelectedSubType == st.Key ? "selected" : "")"
+                                @onclick="() => SelectedSubType = st.Key">
+                            @st.Ar
+                        </button>
+                    }
+                </div>
+            </div>
+        }
+    }
+
+    <!-- النتيجة -->
+    <div class="field-group">
+        <label>نتيجة الحدث</label>
+        <div class="outcome-grid">
+            <button type="button" class="@(Outcome == "successful" ? "selected" : "")"
+                    @onclick='() => Outcome = "successful"'>✓ ناجح</button>
+            <button type="button" class="@(Outcome == "failed" ? "selected" : "")"
+                    @onclick='() => Outcome = "failed"'>✗ فاشل</button>
+            <button type="button" class="@(Outcome == "key" ? "selected" : "")"
+                    @onclick='() => Outcome = "key"'>★ مفتاحي</button>
+        </div>
+    </div>
+
+    <!-- الخصائص الإضافية (Qualifiers) -->
+    <div class="field-group">
+        <label>خصائص إضافية (Qualifiers)</label>
+        <div style="display:flex; flex-wrap:wrap; gap:4px; max-height:90px; overflow-y:auto; padding:4px; background:var(--bg-input); border-radius:6px; border:1px solid var(--border-color);">
+            @foreach (var q in EventTaxonomy.Qualifiers.Take(12))
+            {
+                var isSelected = SelectedQualifiers.Contains(q.Key);
+                <button type="button" style="font-size:10px; padding:3px 7px; background:@(isSelected ? "var(--color-primary)" : "#21262d");"
+                        @onclick="() => ToggleQualifier(q.Key)">
+                    @q.Value
+                </button>
+            }
+        </div>
+    </div>
+
+    <!-- الملاحظة -->
+    <div class="field-group">
+        <label>ملاحظة</label>
+        <textarea @bind="Note" rows="2" placeholder="ملاحظة تكتيكية..."></textarea>
+    </div>
+
+    <!-- زر الحفظ -->
+    <button type="button" class="save-btn" style="width:100%;" @onclick="Save">
+        💾 حفظ الحدث (Enter)
+    </button>
+</div>
+
+@code {
+    [Parameter] public Team? HomeTeam { get; set; }
+    [Parameter] public Team? AwayTeam { get; set; }
+    [Parameter] public List<Player> Players { get; set; } = new();
+    [Parameter] public int SelectedTeamId { get; set; }
+    [Parameter] public EventCallback<int> SelectedTeamIdChanged { get; set; }
+    [Parameter] public int SelectedPlayerId { get; set; }
+    [Parameter] public EventCallback<int> SelectedPlayerIdChanged { get; set; }
+    [Parameter] public string SelectedCategory { get; set; } = "";
+    [Parameter] public string SelectedSubType { get; set; } = "";
+    [Parameter] public string Outcome { get; set; } = "successful";
+    [Parameter] public string Note { get; set; } = "";
+    [Parameter] public List<string> SelectedQualifiers { get; set; } = new();
+    [Parameter] public EventCallback OnSave { get; set; }
+    [Parameter] public EventCallback OnTeamSelect { get; set; }
+
+    private async Task OnTeamChanged()
+    {
+        await SelectedTeamIdChanged.InvokeAsync(SelectedTeamId);
+        await OnTeamSelect.InvokeAsync();
+    }
+
+    private void SelectCategory(string cat)
+    {
+        SelectedCategory = cat;
+        SelectedSubType = "";
+    }
+
+    private void ToggleQualifier(string key)
+    {
+        if (SelectedQualifiers.Contains(key))
+            SelectedQualifiers.Remove(key);
+        else
+            SelectedQualifiers.Add(key);
+    }
+
+    private async Task Save()
+    {
+        await OnSave.InvokeAsync();
+    }
+}

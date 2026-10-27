@@ -1,0 +1,146 @@
+@page "/"
+@inject AppDbContext Db
+@inject NavigationManager Nav
+
+<div class="content-wrapper">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+        <div>
+            <h1 style="font-size:24px; font-weight:800; margin:0 0 4px 0; color:#58a6ff;">Match Analyst Pro ⚽</h1>
+            <p style="margin:0; color:var(--text-muted); font-size:14px;">منصة تحليل المباريات والبيانات التكتيكية الاحترافية — الدوري المصري والبطولات العربية</p>
+        </div>
+        <div>
+            <a href="/matches" class="btn-primary" style="padding:8px 16px; border-radius:6px; text-decoration:none; display:inline-flex; align-items:center; gap:6px;">
+                ➕ إدارة المباريات
+            </a>
+        </div>
+    </div>
+
+    <!-- بطاقات الإحصائيات السريعة -->
+    <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:16px; margin-bottom:24px;">
+        <div class="card" style="margin:0;">
+            <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">إجمالي المباريات</div>
+            <div style="font-size:26px; font-weight:800; color:#58a6ff;">@_matchesCount</div>
+        </div>
+        <div class="card" style="margin:0;">
+            <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">الأحداث المصنفة</div>
+            <div style="font-size:26px; font-weight:800; color:#3fb950;">@_eventsCount</div>
+        </div>
+        <div class="card" style="margin:0;">
+            <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">الحيازات المسجلة</div>
+            <div style="font-size:26px; font-weight:800; color:#d29922;">@_possessionsCount</div>
+        </div>
+        <div class="card" style="margin:0;">
+            <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">الفرق واللاعبين</div>
+            <div style="font-size:26px; font-weight:800; color:#bc8cff;">@_teamsCount فريق / @_playersCount لاعب</div>
+        </div>
+    </div>
+
+    <!-- المباريات الأخيرة -->
+    <div class="card">
+        <h2 class="card-title">المباريات النشطة للتصنيف والتحليل</h2>
+        @if (_recentMatches.Any())
+        {
+            <div class="table-responsive">
+                <table class="pro-table">
+                    <thead>
+                        <tr>
+                            <th>المباراة</th>
+                            <th>البطولة</th>
+                            <th>التاريخ</th>
+                            <th>الملعب</th>
+                            <th>الحالة</th>
+                            <th>الأحداث</th>
+                            <th>الإجراءات السريعة</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var m in _recentMatches)
+                        {
+                            var evCount = m.Events?.Count ?? 0;
+                            <tr>
+                                <td style="font-weight:700;">
+                                    <span style="color:#58a6ff;">@(m.HomeTeam?.NameAr ?? "مضيف")</span> ضد <span style="color:#f85149;">@(m.AwayTeam?.NameAr ?? "ضيف")</span>
+                                </td>
+                                <td>@m.Competition</td>
+                                <td>@m.Date.ToString("yyyy-MM-dd")</td>
+                                <td>@(m.Venue ?? "غير محدد")</td>
+                                <td>
+                                    <span class="badge @(m.Status == "Complete" ? "badge-success" : "badge-info")">
+                                        @m.Status
+                                    </span>
+                                </td>
+                                <td><span style="font-weight:bold;">@evCount</span> حدث</td>
+                                <td>
+                                    <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                                        <a href="/tagger/@m.Id" class="badge badge-info" style="text-decoration:none;">🎬 تصنيف</a>
+                                        <a href="/intelligence/@m.Id" class="badge" style="background:#8957e5; color:#fff; text-decoration:none;">🧠 نقاط القوة والضعف</a>
+                                        <a href="/calibration/@m.Id" class="badge badge-warning" style="text-decoration:none;">📐 معايرة</a>
+                                        <a href="/possessions/@m.Id" class="badge badge-success" style="text-decoration:none;">⛓ حيازة</a>
+                                        <a href="/qc/@m.Id" class="badge badge-info" style="text-decoration:none;">✅ فحص</a>
+                                        <a href="/export/@m.Id" class="badge badge-success" style="text-decoration:none;">📤 تصدير</a>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        else
+        {
+            <div style="text-align:center; padding:30px; color:var(--text-muted);">
+                لا توجد مباريات مسجلة حالياً. قم بإنشاء مباراة جديدة للبدء.
+            </div>
+        }
+    </div>
+
+    <!-- لوحة المزايا والتعليمات التكتيكية -->
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+        <div class="card">
+            <h3 class="card-title">ميزات النظام المكتملة ⚡</h3>
+            <ul style="font-size:13px; line-height:1.8; color:var(--text-muted); padding-right:20px; margin:0;">
+                <li><strong style="color:var(--text-primary);">الذكاء التكتيكي ونقاط القوة والضعف (SWOT)</strong>: مضاهاة Wyscout وStatsBomb في توليد مؤشرات xG وPPDA وField Tilt والتوجيهات الفنية.</li>
+                <li><strong style="color:var(--text-primary);">إدارة ورفع الفيديو الشاملة</strong>: دعم رفع الفيديوهات بأي حجم، استكشاف الفيديوهات على الحاسوب، وعينات تجريبية جاهزة.</li>
+                <li><strong style="color:var(--text-primary);">تصنيف بدقة الفريم (Frame-Accuracy)</strong> مع دعم 150+ حدث بالعربي متوافق مع StatsBomb وOpta.</li>
+                <li><strong style="color:var(--text-primary);">معايرة الملعب (Homography Transformation)</strong> لتحويل الإحداثيات من بكسل الفيديو إلى أمتار الملعب الحقيقية (105x68).</li>
+                <li><strong style="color:var(--text-primary);">تقسيم متسلسل للحيازات (Possession Sequences)</strong> ومحرك فحص الجودة (Quality Control) التلقائي.</li>
+            </ul>
+        </div>
+        <div class="card">
+            <h3 class="card-title">اختصارات لوحة المفاتيح السريعة ⌨️</h3>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; font-size:12px;">
+                <div><kbd style="background:#21262d; padding:2px 6px; border-radius:4px;">Enter</kbd> حفظ الحدث فوراً</div>
+                <div><kbd style="background:#21262d; padding:2px 6px; border-radius:4px;">Space</kbd> إيقاف / تشغيل الفيديو</div>
+                <div><kbd style="background:#21262d; padding:2px 6px; border-radius:4px;">◀ / ▶</kbd> إطار للخلف / للأمام</div>
+                <div><kbd style="background:#21262d; padding:2px 6px; border-radius:4px;">▲ / ▼</kbd> ثانية كاملة (25 إطار)</div>
+                <div><kbd style="background:#21262d; padding:2px 6px; border-radius:4px;">1-9</kbd> اختيار سريع للفئات الرئيسية</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private int _matchesCount = 0;
+    private int _eventsCount = 0;
+    private int _possessionsCount = 0;
+    private int _teamsCount = 0;
+    private int _playersCount = 0;
+    private List<Match> _recentMatches = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _matchesCount = await Db.Matches.CountAsync();
+        _eventsCount = await Db.Events.CountAsync();
+        _possessionsCount = await Db.Possessions.CountAsync();
+        _teamsCount = await Db.Teams.CountAsync();
+        _playersCount = await Db.Players.CountAsync();
+
+        _recentMatches = await Db.Matches
+            .Include(m => m.HomeTeam)
+            .Include(m => m.AwayTeam)
+            .Include(m => m.Events)
+            .OrderByDescending(m => m.Date)
+            .Take(10)
+            .ToListAsync();
+    }
+}

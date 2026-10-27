@@ -1,0 +1,151 @@
+@page "/qc"
+@page "/qc/{MatchId:int}"
+@inject AppDbContext Db
+@inject QualityControlService QcService
+@inject IJSRuntime JS
+
+<div class="content-wrapper">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:10px;">
+        <div>
+            <h1 class="page-title" style="margin:0;">✅ مركز فحص ومراقبة الجودة (Quality Control)</h1>
+            <p style="margin:4px 0 0 0; color:var(--text-muted); font-size:13px;">فحص أوتوماتيكي متقدم لرصد أي أخطاء زمنية أو إحداثية أو تصنيفية قبل اعتماد وتصدير البيانات</p>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center;">
+            <select value="@MatchId" @onchange="OnMatchChanged"
+                    style="background:#161b22; border:1px solid #388bfd; color:#58a6ff; font-weight:700; padding:6px 12px; border-radius:6px; font-size:12px; cursor:pointer;">
+                @foreach (var m in _matches)
+                {
+                    <option value="@m.Id">#@m.Id: @(m.HomeTeam?.NameAr ?? "مضيف") ضد @(m.AwayTeam?.NameAr ?? "ضيف")</option>
+                }
+            </select>
+            <button class="primary" @onclick="RunAudit">🔄 إعادة تشغيل الفحص الشامل</button>
+        </div>
+    </div>
+
+    <!-- بطاقات نتائج الفحص -->
+    <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:14px; margin-bottom:20px;">
+        <div class="card" style="margin:0;">
+            <div style="font-size:12px; color:var(--text-muted);">إجمالي الملاحظات المكتشفة</div>
+            <div style="font-size:26px; font-weight:800; color:@(_issues.Any() ? "#f85149" : "#3fb950");">
+                @_issues.Count
+            </div>
+        </div>
+        <div class="card" style="margin:0;">
+            <div style="font-size:12px; color:var(--text-muted);">أخطاء عالية الخطورة (High)</div>
+            <div style="font-size:26px; font-weight:800; color:#f85149;">
+                @_issues.Count(i => i.Severity == "high")
+            </div>
+        </div>
+        <div class="card" style="margin:0;">
+            <div style="font-size:12px; color:var(--text-muted);">تنبيهات متوسطة (Medium)</div>
+            <div style="font-size:26px; font-weight:800; color:#d29922;">
+                @_issues.Count(i => i.Severity == "medium")
+            </div>
+        </div>
+        <div class="card" style="margin:0;">
+            <div style="font-size:12px; color:var(--text-muted);">تنبيهات منخفضة (Low)</div>
+            <div style="font-size:26px; font-weight:800; color:#58a6ff;">
+                @_issues.Count(i => i.Severity == "low")
+            </div>
+        </div>
+    </div>
+
+    @if (!_issues.Any())
+    {
+        <div class="card" style="text-align:center; padding:40px; border-color:#2ea043; background:rgba(35, 134, 54, 0.08);">
+            <div style="font-size:42px; margin-bottom:10px;">🎉</div>
+            <div style="font-size:18px; font-weight:700; color:#3fb950; margin-bottom:6px;">البيانات مطابقة لمعايير الجودة بنسبة 100%</div>
+            <div style="font-size:13px; color:var(--text-muted);">تم التحقق من الترتيب الزمني، إحداثيات التسديد والتمرير، ونوافذ المتابعة بدون أي أخطاء.</div>
+        </div>
+    }
+    else
+    {
+        <div class="card">
+            <h2 class="card-title">قائمة الملاحظات والأخطاء المكتشفة (@_issues.Count)</h2>
+            <div class="table-responsive">
+                <table class="pro-table">
+                    <thead>
+                        <tr>
+                            <th>مستوى الخطورة</th>
+                            <th>رمز الفحص</th>
+                            <th>معرف الحدث (Event ID)</th>
+                            <th>وصف المشكلة</th>
+                            <th>الإجراء المقترح</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var issue in _issues)
+                        {
+                            <tr>
+                                <td>
+                                    <span class="badge @(issue.Severity == "high" ? "badge-danger" : issue.Severity == "medium" ? "badge-warning" : "badge-info")">
+                                        @issue.Severity.ToUpper()
+                                    </span>
+                                </td>
+                                <td><code>@issue.Code</code></td>
+                                <td>@(issue.EventId.HasValue ? $"#{issue.EventId}" : "-")</td>
+                                <td>@issue.Description</td>
+                                <td>
+                                    @if (issue.EventId.HasValue)
+                                    {
+                                        <a href="/tagger/@MatchId?eventId=@issue.EventId" class="badge badge-info" style="text-decoration:none;">
+                                            ✏️ فتح الحدث في المصنف للتصحيح
+                                        </a>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public int MatchId { get; set; } = 1;
+
+    private Match? Match;
+    private List<Match> _matches = new();
+    private List<Event> _events = new();
+    private List<QcIssue> _issues = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RunAudit();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Match == null || Match.Id != MatchId)
+        {
+            await RunAudit();
+        }
+    }
+
+    private async Task OnMatchChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var id) && id != MatchId)
+        {
+            MatchId = id;
+            await RunAudit();
+        }
+    }
+
+    private async Task RunAudit()
+    {
+        _matches = await Db.Matches.Include(m => m.HomeTeam).Include(m => m.AwayTeam).OrderByDescending(m => m.Date).ToListAsync();
+        Match = _matches.FirstOrDefault(m => m.Id == MatchId) ?? _matches.FirstOrDefault();
+
+        if (Match != null)
+        {
+            MatchId = Match.Id;
+            _events = await Db.Events
+                .Where(e => e.MatchId == Match.Id)
+                .OrderBy(e => e.Id)
+                .ToListAsync();
+
+            _issues = QcService.ValidateMatch(_events);
+        }
+    }
+}

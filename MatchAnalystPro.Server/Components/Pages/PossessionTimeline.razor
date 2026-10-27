@@ -1,0 +1,189 @@
+@page "/possessions"
+@page "/possessions/{MatchId:int}"
+@inject AppDbContext Db
+@inject PossessionService PossService
+@inject IJSRuntime JS
+
+<div class="content-wrapper">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:10px;">
+        <div>
+            <h1 class="page-title" style="margin:0;">⛓ سلسلة الحيازة وسلاسل الهجمات (Possession Sequences)</h1>
+            <p style="margin:4px 0 0 0; color:var(--text-muted); font-size:13px;">تقسيم أحداث المباراة تلقائياً إلى حيازات وهجمات متسلسلة وحساب مخرجات كل حيازة</p>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center;">
+            <select value="@MatchId" @onchange="OnMatchChanged"
+                    style="background:#161b22; border:1px solid #388bfd; color:#58a6ff; font-weight:700; padding:6px 12px; border-radius:6px; font-size:12px; cursor:pointer;">
+                @foreach (var m in _matches)
+                {
+                    <option value="@m.Id">#@m.Id: @(m.HomeTeam?.NameAr ?? "مضيف") ضد @(m.AwayTeam?.NameAr ?? "ضيف")</option>
+                }
+            </select>
+            <button class="primary" @onclick="RebuildPossessions">⚡ إعادة بناء سلاسل الحيازة</button>
+        </div>
+    </div>
+
+    @if (Match != null)
+    {
+        <!-- ملخص إحصائيات الحيازة -->
+        <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:14px; margin-bottom:20px;">
+            <div class="card" style="margin:0;">
+                <div style="font-size:12px; color:var(--text-muted);">إجمالي الحيازات</div>
+                <div style="font-size:24px; font-weight:800; color:#58a6ff;">@_possessions.Count</div>
+            </div>
+            <div class="card" style="margin:0;">
+                <div style="font-size:12px; color:var(--text-muted);">حيازات أدت لتسديدة</div>
+                <div style="font-size:24px; font-weight:800; color:#d29922;">@_possessions.Count(p => p.LedToShot)</div>
+            </div>
+            <div class="card" style="margin:0;">
+                <div style="font-size:12px; color:var(--text-muted);">حيازات أدت لهدف</div>
+                <div style="font-size:24px; font-weight:800; color:#3fb950;">@_possessions.Count(p => p.LedToGoal)</div>
+            </div>
+            <div class="card" style="margin:0;">
+                <div style="font-size:12px; color:var(--text-muted);">متوسط الأحداث لكل حيازة</div>
+                <div style="font-size:24px; font-weight:800; color:#bc8cff;">
+                    @(_possessions.Any() ? _possessions.Average(p => p.EventCount).ToString("F1") : "0")
+                </div>
+            </div>
+        </div>
+
+        <!-- شريط الفلترة -->
+        <div class="card" style="margin-bottom:16px; padding:10px;">
+            <div style="display:flex; gap:12px; align-items:center;">
+                <span style="font-weight:600; font-size:13px;">تصفية:</span>
+                <button class="@(_filterTeamId == 0 ? "primary" : "")" style="font-size:12px; padding:4px 10px;" @onclick="() => _filterTeamId = 0">كل الفرق</button>
+                @if (Match.HomeTeam != null)
+                {
+                    <button class="@(_filterTeamId == Match.HomeTeamId ? "primary" : "")" style="font-size:12px; padding:4px 10px;" @onclick="() => _filterTeamId = Match.HomeTeamId">@Match.HomeTeam.NameAr</button>
+                }
+                @if (Match.AwayTeam != null)
+                {
+                    <button class="@(_filterTeamId == Match.AwayTeamId ? "primary" : "")" style="font-size:12px; padding:4px 10px;" @onclick="() => _filterTeamId = Match.AwayTeamId">@Match.AwayTeam.NameAr</button>
+                }
+                <label style="margin-right:auto; font-size:12px; display:flex; align-items:center; gap:6px; cursor:pointer;">
+                    <input type="checkbox" @bind="_onlyShots" />
+                    عرض الحيازات المنتهية بتسديدات فقط
+                </label>
+            </div>
+        </div>
+
+        <!-- جدول الحيازات -->
+        <div class="card">
+            <h2 class="card-title">قائمة الحيازات المتسلسلة</h2>
+            <div class="table-responsive">
+                <table class="pro-table">
+                    <thead>
+                        <tr>
+                            <th>تسلسل</th>
+                            <th>الفريق المستحوذ</th>
+                            <th>الشوط</th>
+                            <th>التوقيت</th>
+                            <th>عدد الأحداث</th>
+                            <th>بداية الحيازة</th>
+                            <th>نهاية الحيازة</th>
+                            <th>تسديدة؟</th>
+                            <th>هدف؟</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var p in FilteredPossessions())
+                        {
+                            var teamName = p.TeamId == Match.HomeTeamId ? Match.HomeTeam?.NameAr : Match.AwayTeam?.NameAr;
+                            <tr>
+                                <td><strong>#@p.SequenceNumber</strong></td>
+                                <td style="font-weight:700; color:@(p.TeamId == Match.HomeTeamId ? "#58a6ff" : "#f85149");">
+                                    @teamName
+                                </td>
+                                <td>شوط @p.Period</td>
+                                <td style="font-family:monospace;">@FormatTime(p.StartMs) - @FormatTime(p.EndMs)</td>
+                                <td><strong>@p.EventCount</strong> أحداث</td>
+                                <td><span class="badge badge-info">@p.StartType</span></td>
+                                <td><span class="badge badge-warning">@p.EndType</span></td>
+                                <td>
+                                    @if (p.LedToShot) { <span class="badge badge-warning">★ تسديدة</span> } else { <span>-</span> }
+                                </td>
+                                <td>
+                                    @if (p.LedToGoal) { <span class="badge badge-success">⚽ هدف</span> } else { <span>-</span> }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public int MatchId { get; set; } = 1;
+
+    private Match? Match;
+    private List<Match> _matches = new();
+    private List<Possession> _possessions = new();
+    private int _filterTeamId = 0;
+    private bool _onlyShots = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Match == null || Match.Id != MatchId)
+        {
+            await LoadDataAsync();
+        }
+    }
+
+    private async Task OnMatchChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var id) && id != MatchId)
+        {
+            MatchId = id;
+            await LoadDataAsync();
+        }
+    }
+
+    private async Task LoadDataAsync()
+    {
+        _matches = await Db.Matches.Include(m => m.HomeTeam).Include(m => m.AwayTeam).OrderByDescending(m => m.Date).ToListAsync();
+        Match = _matches.FirstOrDefault(m => m.Id == MatchId) ?? _matches.FirstOrDefault();
+
+        if (Match != null)
+        {
+            MatchId = Match.Id;
+            _possessions = await Db.Possessions
+                .Where(p => p.MatchId == Match.Id)
+                .OrderBy(p => p.SequenceNumber)
+                .ToListAsync();
+
+            if (!_possessions.Any())
+            {
+                await RebuildPossessions();
+            }
+        }
+    }
+
+    private async Task RebuildPossessions()
+    {
+        if (Match == null) return;
+        _possessions = await PossService.BuildPossessionsAsync(Match.Id);
+        StateHasChanged();
+    }
+
+    private IEnumerable<Possession> FilteredPossessions()
+    {
+        var q = _possessions.AsEnumerable();
+        if (_filterTeamId > 0)
+            q = q.Where(p => p.TeamId == _filterTeamId);
+        if (_onlyShots)
+            q = q.Where(p => p.LedToShot);
+        return q;
+    }
+
+    private static string FormatTime(long ms)
+    {
+        var s = ms / 1000;
+        return $"{s / 60:00}:{s % 60:00}";
+    }
+}

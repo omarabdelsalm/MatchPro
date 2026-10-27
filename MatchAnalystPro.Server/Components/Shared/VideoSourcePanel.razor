@@ -1,0 +1,308 @@
+@inject VideoService VideoService
+@inject IJSRuntime JS
+
+<div class="video-manager-card" style="background:#161b22; border:1px solid #30363d; border-radius:8px; padding:16px; margin-bottom:12px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; border-bottom:1px solid #21262d; padding-bottom:10px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-size:20px;">🎬</span>
+            <div>
+                <h3 style="margin:0; font-size:15px; color:#58a6ff; font-weight:700;">إدارة وربط ملف الفيديو للمباراة #@MatchId</h3>
+                <span style="font-size:11px; color:var(--text-muted);">اختر طريقة توفير الفيديو: رفع من جهازك، إدخال مسار مباشر، أو استخدام العينة التدريبية</span>
+            </div>
+        </div>
+        @if (OnClose.HasDelegate)
+        {
+            <button type="button" class="btn-sm" style="background:#21262d; border:1px solid #30363d; color:#c9d1d9;" @onclick="OnClose">✖ إغلاق</button>
+        }
+    </div>
+
+    <!-- التبويبات -->
+    <div style="display:flex; gap:6px; margin-bottom:14px; border-bottom:1px solid #21262d; padding-bottom:8px; flex-wrap:wrap;">
+        <button type="button" class="@(_activeTab == "upload" ? "primary" : "")" style="padding:6px 14px; font-size:12px; cursor:pointer;" @onclick='() => SetActiveTab("upload")'>
+            📤 رفع فيديو من جهازك
+        </button>
+        <button type="button" class="@(_activeTab == "link" ? "primary" : "")" style="padding:6px 14px; font-size:12px; cursor:pointer;" @onclick='() => SetActiveTab("link")'>
+            🔗 إدخال مسار محلي مباشر
+        </button>
+        <button type="button" class="@(_activeTab == "discovered" ? "primary" : "")" style="padding:6px 14px; font-size:12px; cursor:pointer;" @onclick='() => SetActiveTab("discovered")'>
+            📁 فيديوهات مكتشفة بالحاسوب (@_discoveredVideos.Count)
+        </button>
+        <button type="button" class="@(_activeTab == "demo" ? "primary" : "")" style="padding:6px 14px; font-size:12px; cursor:pointer;" @onclick='() => SetActiveTab("demo")'>
+            ⚡ عينة فيديو جاهزة للتجربة
+        </button>
+    </div>
+
+    <!-- تبويب 1: رفع ملف -->
+    @if (_activeTab == "upload")
+    {
+        <div style="background:#0d1117; border:1px dashed #388bfd; border-radius:6px; padding:20px; text-align:center;">
+            <div style="font-size:36px; margin-bottom:8px;">📂</div>
+            <div style="font-size:14px; font-weight:600; color:#c9d1d9; margin-bottom:4px;">
+                اسحب ملف الفيديو أو انقر لاختياره من حاسوبك
+            </div>
+            <div style="font-size:12px; color:var(--text-muted); margin-bottom:14px;">
+                يدعم صيغ MP4, WebM, MKV, MOV (حجم غير محدود)
+            </div>
+
+            <div style="display:inline-block; position:relative; overflow:hidden;">
+                <InputFile OnChange="HandleFileSelected" accept="video/mp4,video/webm,video/ogg,video/quicktime,video/x-matroska"
+                           disabled="@_isUploading"
+                           style="cursor:pointer;" />
+            </div>
+
+            @if (_isUploading)
+            {
+                <div style="margin-top:16px; max-width:400px; margin-left:auto; margin-right:auto;">
+                    <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px;">
+                        <span style="color:#58a6ff;">جاري الرفع والمعالجة: @_uploadFileName</span>
+                        <span style="font-weight:700; color:#3fb950;">@_uploadPercent%</span>
+                    </div>
+                    <div style="height:8px; background:#21262d; border-radius:4px; overflow:hidden;">
+                        <div style="height:100%; width:@(_uploadPercent)%; background:#238636; transition:width 0.2s;"></div>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+
+    <!-- تبويب 2: إدخال مسار مباشر -->
+    @if (_activeTab == "link")
+    {
+        <div style="background:#0d1117; border:1px solid #21262d; border-radius:6px; padding:14px;">
+            <label style="display:block; font-size:12px; color:#c9d1d9; font-weight:600; margin-bottom:6px;">
+                أدخل أو الصق المسار الكامل لملف الفيديو على حاسوبك:
+            </label>
+            <div style="display:flex; gap:8px;">
+                <input type="text" @bind="_manualPath" placeholder="مثال: D:\Matches\Ahly_Zamalek.mp4 أو C:\Users\user\Videos\match.mp4" 
+                       style="flex:1; background:#161b22; border:1px solid #30363d; color:#fff; padding:6px 10px; border-radius:6px; font-size:13px;" />
+                <button type="button" class="primary" @onclick="LinkManualPath" style="white-space:nowrap; padding:6px 14px;">
+                    ✓ فحص وربط فوري
+                </button>
+            </div>
+            <div style="font-size:11px; color:var(--text-muted); margin-top:6px;">
+                💡 نصيحة: في بيئة سطح المكتب، الربط المباشر يتم فوراً بـ 0 ثانية انتظار دون الحاجة لإعادة نسخ الملفات الكبيرة.
+            </div>
+        </div>
+    }
+
+    <!-- تبويب 3: فيديوهات مكتشفة على الجهاز -->
+    @if (_activeTab == "discovered")
+    {
+        <div style="background:#0d1117; border:1px solid #21262d; border-radius:6px; padding:12px;">
+            @if (_discoveredVideos.Count == 0)
+            {
+                <div style="text-align:center; padding:16px; color:var(--text-muted); font-size:13px;">
+                    لم يتم العثور على ملفات MP4 في مجلدات الفيديوهات والتنزيلات وسطح المكتب.<br />
+                    يمكنك استخدام تبويب "رفع فيديو" أو إدخال المسار يدوياً.
+                </div>
+            }
+            else
+            {
+                <div style="max-height:220px; overflow-y:auto;">
+                    <table class="pro-table" style="font-size:12px;">
+                        <thead>
+                            <tr>
+                                <th>اسم الملف</th>
+                                <th>المسار</th>
+                                <th>الحجم</th>
+                                <th>الإجراء</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var vid in _discoveredVideos)
+                            {
+                                <tr>
+                                    <td style="font-weight:600; color:#58a6ff;">@vid.Name</td>
+                                    <td style="color:var(--text-muted); max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="@vid.FullPath">
+                                        @vid.FullPath
+                                    </td>
+                                    <td>@vid.SizeMb MB</td>
+                                    <td>
+                                        <button type="button" class="success" style="padding:2px 8px; font-size:11px;" @onclick="() => LinkDiscoveredVideo(vid.FullPath)">
+                                            ربط هذه المباراة
+                                        </button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    }
+
+    <!-- تبويب 4: عينة فيديو جاهزة للتجربة -->
+    @if (_activeTab == "demo")
+    {
+        <div style="background:#0d1117; border:1px solid #21262d; border-radius:6px; padding:16px; text-align:center;">
+            <div style="font-size:32px; margin-bottom:8px;">⚡</div>
+            <h4 style="margin:0 0 6px 0; color:#58a6ff; font-size:14px;">تجربة النظام فوراً بعينة فيديو كروية</h4>
+            <p style="margin:0 0 14px 0; font-size:12px; color:var(--text-muted); max-width:500px; margin-left:auto; margin-right:auto;">
+                إذا لم تكن تملك فيديو مباراة جاهزاً الآن، يمكنك تجهيز عينة فيديو تدريبية بنقرة واحدة لتجربة التقطيع بالفريم، المعايرة، ورسم الملعب فوراً.
+            </p>
+            <button type="button" class="primary" disabled="@_isPreparingDemo" @onclick="PrepareDemoVideo" style="padding:8px 18px; font-size:13px;">
+                @(_isPreparingDemo ? "جاري تجهيز العينة..." : "🎬 إدراج العينة التدريبية الآن")
+            </button>
+        </div>
+    }
+
+    <!-- رسائل التنبيه والنجاح -->
+    @if (!string.IsNullOrEmpty(_statusMessage))
+    {
+        <div style="margin-top:12px; padding:8px 12px; border-radius:6px; font-size:12px; 
+                    background:@(_isSuccess ? "rgba(35, 134, 54, 0.2)" : "rgba(248, 81, 73, 0.2)"); 
+                    border:1px solid @(_isSuccess ? "#238636" : "#f85149"); 
+                    color:@(_isSuccess ? "#3fb950" : "#f85149");">
+            @_statusMessage
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public int MatchId { get; set; }
+    [Parameter] public string CurrentVideoPath { get; set; } = "";
+    [Parameter] public EventCallback OnVideoUpdated { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private string _activeTab = "upload";
+    private string _manualPath = "";
+    private string _statusMessage = "";
+    private bool _isSuccess = false;
+    private bool _isUploading = false;
+    private string _uploadFileName = "";
+    private int _uploadPercent = 0;
+    private bool _isPreparingDemo = false;
+    private List<DiscoveredVideo> _discoveredVideos = new();
+
+    protected override void OnInitialized()
+    {
+        _manualPath = CurrentVideoPath;
+        _discoveredVideos = VideoService.DiscoverLocalVideos();
+    }
+
+    private void SetActiveTab(string tab)
+    {
+        _activeTab = tab;
+        if (tab == "discovered")
+        {
+            _discoveredVideos = VideoService.DiscoverLocalVideos();
+        }
+        _statusMessage = "";
+        StateHasChanged();
+    }
+
+    private void RefreshDiscovered()
+    {
+        SetActiveTab("discovered");
+    }
+
+    private async Task HandleFileSelected(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file == null) return;
+
+        _isUploading = true;
+        _uploadFileName = file.Name;
+        _uploadPercent = 0;
+        _statusMessage = "";
+        StateHasChanged();
+
+        try
+        {
+            // Allow up to 10 GB file size
+            const long maxAllowedSize = 10L * 1024 * 1024 * 1024;
+            await using var stream = file.OpenReadStream(maxAllowedSize);
+
+            var (success, msg, path) = await VideoService.SaveUploadedVideoAsync(
+                MatchId,
+                file.Name,
+                stream,
+                file.Size,
+                async (percent) =>
+                {
+                    _uploadPercent = percent;
+                    await InvokeAsync(StateHasChanged);
+                }
+            );
+
+            _isSuccess = success;
+            _statusMessage = msg;
+            if (success)
+            {
+                CurrentVideoPath = path;
+                _manualPath = path;
+                await OnVideoUpdated.InvokeAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _isSuccess = false;
+            _statusMessage = $"خطأ في عملية الرفع: {ex.Message}";
+        }
+        finally
+        {
+            _isUploading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task LinkManualPath()
+    {
+        if (string.IsNullOrWhiteSpace(_manualPath))
+        {
+            _isSuccess = false;
+            _statusMessage = "يرجى كتابة أو لصق مسار الملف";
+            return;
+        }
+
+        var (success, msg) = await VideoService.LinkVideoPathAsync(MatchId, _manualPath);
+        _isSuccess = success;
+        _statusMessage = msg;
+
+        if (success)
+        {
+            CurrentVideoPath = _manualPath;
+            await OnVideoUpdated.InvokeAsync();
+        }
+    }
+
+    private async Task LinkDiscoveredVideo(string fullPath)
+    {
+        var (success, msg) = await VideoService.LinkVideoPathAsync(MatchId, fullPath);
+        _isSuccess = success;
+        _statusMessage = msg;
+
+        if (success)
+        {
+            CurrentVideoPath = fullPath;
+            _manualPath = fullPath;
+            await OnVideoUpdated.InvokeAsync();
+        }
+    }
+
+    private async Task PrepareDemoVideo()
+    {
+        _isPreparingDemo = true;
+        _statusMessage = "جاري إعداد عينة الفيديو التدريبية...";
+        _isSuccess = true;
+        StateHasChanged();
+
+        try
+        {
+            var (success, msg, path) = await VideoService.CreateOrDownloadDemoVideoAsync(MatchId);
+            _isSuccess = success;
+            _statusMessage = msg;
+            if (success)
+            {
+                CurrentVideoPath = path;
+                _manualPath = path;
+                await OnVideoUpdated.InvokeAsync();
+            }
+        }
+        finally
+        {
+            _isPreparingDemo = false;
+            StateHasChanged();
+        }
+    }
+}

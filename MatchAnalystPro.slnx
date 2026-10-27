@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="MatchAnalystPro.Server/MatchAnalystPro.Server.csproj" />
+  <Project Path="MatchAnalystPro.Shell/MatchAnalystPro.Shell.csproj" />
+</Solution>

@@ -1,0 +1,15 @@
+<Router AppAssembly="typeof(Program).Assembly">
+    <Found Context="routeData">
+        <RouteView RouteData="routeData" DefaultLayout="typeof(Layout.MainLayout)" />
+        <FocusOnNavigate RouteData="routeData" Selector="h1" />
+    </Found>
+    <NotFound>
+        <LayoutView Layout="typeof(Layout.MainLayout)">
+            <div class="content-wrapper" style="text-align:center; padding:50px;">
+                <h2>الصفحة غير موجودة</h2>
+                <p>عذراً، الرابط المطلوب غير متوفر.</p>
+                <a href="/" class="badge badge-info" style="font-size:14px; text-decoration:none; padding:8px 16px;">العودة للرئيسية</a>
+            </div>
+        </LayoutView>
+    </NotFound>
+</Router>

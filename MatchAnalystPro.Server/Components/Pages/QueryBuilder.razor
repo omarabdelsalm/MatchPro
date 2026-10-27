@@ -1,0 +1,367 @@
+@page "/query"
+@page "/query/{MatchId:int}"
+@using MatchAnalystPro.Server.Data
+@using MatchAnalystPro.Server.Services
+@using MatchAnalystPro.Server.Taxonomy
+@using MatchAnalystPro.Server.Models
+@inject AppDbContext Db
+@inject QueryService QueryService
+@inject ClipService ClipService
+@inject IJSRuntime JS
+@inject NavigationManager NavigationManager
+
+<div class="query-page">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
+        <h2 style="margin:0;">🔍 بناء الاستعلامات المتقدم ومولد المونتاج التكتيكي (Tactical Query & Video Builder)</h2>
+        <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-size:12px; color:#8b949e;">المباراة:</span>
+            <select value="@MatchId" @onchange="OnMatchChanged"
+                    style="background:#161b22; border:1px solid #388bfd; color:#58a6ff; font-weight:700; padding:4px 10px; border-radius:6px; font-size:12px; cursor:pointer;">
+                @foreach (var m in _matches)
+                {
+                    <option value="@m.Id">#@m.Id: @(m.HomeTeam?.NameAr ?? "مضيف") ضد @(m.AwayTeam?.NameAr ?? "ضيف")</option>
+                }
+            </select>
+            <span class="badge badge-info">
+                @(_homeTeam?.NameAr ?? "المضيف") ضد @(_awayTeam?.NameAr ?? "الضيف")
+            </span>
+        </div>
+    </div>
+
+    <div class="query-layout">
+        <!-- لوحة الفلاتر -->
+        <div class="filters-panel">
+            <h3 style="margin-top:0; font-size:14px; border-bottom:1px solid #30363d; padding-bottom:6px;">الفلاتر التكتيكية</h3>
+
+            <div class="filter-group">
+                <label>الفئة</label>
+                <select @bind="_filter.Category">
+                    <option value="">الكل</option>
+                    @foreach (var cat in EventTaxonomy.Categories)
+                    {
+                        <option value="@cat.Key">@cat.Ar</option>
+                    }
+                </select>
+            </div>
+
+            @if (!string.IsNullOrEmpty(_filter.Category))
+            {
+                var cat = EventTaxonomy.GetCategory(_filter.Category);
+                @if (cat != null)
+                {
+                    <div class="filter-group">
+                        <label>النوع الفرعي</label>
+                        <select @bind="_filter.SubType">
+                            <option value="">الكل</option>
+                            @foreach (var st in cat.SubTypes)
+                            {
+                                <option value="@st.Key">@st.Ar</option>
+                            }
+                        </select>
+                    </div>
+                }
+            }
+
+            <div class="filter-group">
+                <label>النتيجة</label>
+                <select @bind="_filter.Outcome">
+                    <option value="">الكل</option>
+                    <option value="successful">ناجح</option>
+                    <option value="failed">فاشل</option>
+                    <option value="key">مفتاحي</option>
+                    <option value="goal">هدف</option>
+                </select>
+            </div>
+
+            <div class="filter-group">
+                <label>الفريق</label>
+                <select @bind="_filter.TeamId">
+                    <option value="0">كلاهما</option>
+                    @if (_homeTeam != null) { <option value="@_homeTeam.Id">@_homeTeam.NameAr</option> }
+                    @if (_awayTeam != null) { <option value="@_awayTeam.Id">@_awayTeam.NameAr</option> }
+                </select>
+            </div>
+
+            <div class="filter-group">
+                <label>اللاعب</label>
+                <select @bind="_filter.PlayerId">
+                    <option value="0">الكل</option>
+                    @foreach (var p in _allPlayers)
+                    {
+                        <option value="@p.Id">@p.ShirtNumber - @p.NameAr (@p.Position)</option>
+                    }
+                </select>
+            </div>
+
+            <h4 style="margin-top:14px; margin-bottom:6px; font-size:12px; color:#58a6ff;">منطقة الملعب (0-100)</h4>
+            <div class="range-grid">
+                <label>X من: <input type="number" @bind="_filter.MinX" min="0" max="100" /></label>
+                <label>X إلى: <input type="number" @bind="_filter.MaxX" min="0" max="100" /></label>
+                <label>Y من: <input type="number" @bind="_filter.MinY" min="0" max="100" /></label>
+                <label>Y إلى: <input type="number" @bind="_filter.MaxY" min="0" max="100" /></label>
+            </div>
+
+            <h4 style="margin-top:14px; margin-bottom:6px; font-size:12px; color:#58a6ff;">التوقيت</h4>
+            <div class="range-grid">
+                <label>من دقيقة: <input type="number" @bind="_filter.MinMinute" min="0" max="120" /></label>
+                <label>إلى دقيقة: <input type="number" @bind="_filter.MaxMinute" min="0" max="120" /></label>
+            </div>
+
+            <h4 style="margin-top:14px; margin-bottom:6px; font-size:12px; color:#58a6ff;">الخصائص (Qualifiers)</h4>
+            <div class="qualifiers-grid">
+                @foreach (var q in EventTaxonomy.Qualifiers.Take(12))
+                {
+                    <label class="checkbox-label">
+                        <input type="checkbox"
+                               checked="@_filter.Qualifiers.Contains(q.Key)"
+                               @onchange="e => ToggleQualifier(q.Key, (bool)e.Value!)" />
+                        @q.Value
+                    </label>
+                }
+            </div>
+
+            <div class="filter-group" style="margin-top:14px;">
+                <label class="checkbox-label" style="margin-bottom:4px;">
+                    <input type="checkbox" @bind="_filter.OnlyLeadingToShot" />
+                    أحداث أدت إلى تسديدة فقط
+                </label>
+                <label class="checkbox-label">
+                    <input type="checkbox" @bind="_filter.OnlyLeadingToGoal" />
+                    أحداث أدت إلى هدف فقط
+                </label>
+            </div>
+
+            <button class="run-btn" @onclick="RunQuery" disabled="@_running">
+                @(_running ? "⏳ جاري البحث..." : "▶ تنفيذ الاستعلام")
+            </button>
+
+            <button class="export-btn" style="background:#8957e5; border-color:#a371f7; font-weight:bold;"
+                    @onclick="ExportVideoMontage" disabled="@(_results.Count == 0 || _generatingMontage)">
+                @(_generatingMontage ? "⏳ جاري تقطيع ودمج الفيديو..." : $"🎬 توليد فيلم مونتاج للنتائج ({_results.Count} لقطة)")
+            </button>
+
+            <button class="export-btn" @onclick="ExportCsv" disabled="@(_results.Count == 0)">
+                📤 تصدير النتائج CSV
+            </button>
+        </div>
+
+        <!-- النتائج -->
+        <div class="results-panel">
+            <div class="results-header">
+                <h3 style="margin:0; font-size:15px;">النتائج المطابقة (@_results.Count حدث)</h3>
+                @if (_results.Count > 0)
+                {
+                    <span class="summary-badge">
+                        @_results.Select(r => r.PlayerId).Where(id => id.HasValue).Distinct().Count() لاعب مُمثَّل
+                    </span>
+                }
+            </div>
+
+            <!-- خريطة الملعب -->
+            <div class="map-container">
+                <canvas id="queryPitch" width="800" height="480" 
+                        style="width:100%; max-width:800px; height:280px; border-radius:8px; display:block;"></canvas>
+            </div>
+
+            <!-- جدول النتائج -->
+            <div class="results-table">
+                @foreach (var e in _results)
+                {
+                    <div class="result-row" @onclick="() => JumpTo(e)" title="انقر للانتقال إلى لحظة الحدث في الفيديو">
+                        <span class="res-time">@e.Minute':@e.Second.ToString("00")</span>
+                        <span class="res-cat" style="background:@GetCategoryColor(e.Category)">
+                            @GetCategoryName(e.Category)
+                        </span>
+                        <span class="res-sub">@GetSubTypeName(e.Category, e.SubType)</span>
+                        <span class="res-player">@e.Player?.NameAr</span>
+                        <span class="res-pos">(@(e.X?.ToString("F0") ?? "-"), @(e.Y?.ToString("F0") ?? "-"))</span>
+                        <span class="res-outcome @e.Outcome">@e.Outcome</span>
+                    </div>
+                }
+                @if (_results.Count == 0 && !_running)
+                {
+                    <p style="text-align:center; color:#8b949e; padding:40px;">
+                        انقر على "تنفيذ الاستعلام" لعرض الأحداث المصفاة.
+                    </p>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public int MatchId { get; set; } = 1;
+
+    private Team? _homeTeam;
+    private Team? _awayTeam;
+    private List<Match> _matches = new();
+    private List<Player> _allPlayers = new();
+    private List<Event> _results = new();
+    private bool _running = false;
+    private bool _generatingMontage = false;
+    private QueryFilter _filter = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_homeTeam == null || _filter.MatchId != MatchId)
+        {
+            await LoadDataAsync();
+        }
+    }
+
+    private async Task OnMatchChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var id) && id != MatchId)
+        {
+            MatchId = id;
+            await LoadDataAsync();
+        }
+    }
+
+    private async Task LoadDataAsync()
+    {
+        _matches = await Db.Matches.Include(m => m.HomeTeam).Include(m => m.AwayTeam).OrderByDescending(m => m.Date).ToListAsync();
+        var match = _matches.FirstOrDefault(m => m.Id == MatchId) ?? _matches.FirstOrDefault();
+
+        if (match != null)
+        {
+            MatchId = match.Id;
+            _homeTeam = match.HomeTeam;
+            _awayTeam = match.AwayTeam;
+            _allPlayers = await Db.Players
+                .Where(p => p.TeamId == _homeTeam!.Id || p.TeamId == _awayTeam!.Id)
+                .ToListAsync();
+
+            _filter.MatchId = MatchId;
+            _results = await QueryService.ExecuteAsync(_filter);
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        await DrawPitchOverlayAsync();
+    }
+
+    private async Task RunQuery()
+    {
+        _running = true;
+        _filter.MatchId = MatchId;
+        _results = await QueryService.ExecuteAsync(_filter);
+        _running = false;
+        
+        await DrawPitchOverlayAsync();
+    }
+
+    private async Task ExportVideoMontage()
+    {
+        if (_results.Count == 0) return;
+        _generatingMontage = true;
+        StateHasChanged();
+
+        try
+        {
+            var ids = _results.OrderBy(e => e.FrameNumber).Take(25).Select(e => e.Id).ToList();
+            var path = await ClipService.GenerateMultiEventClipAsync(ids, 4);
+            await JS.InvokeVoidAsync("PitchOverlay.openUrl", $"/clips/{Path.GetFileName(path)}");
+        }
+        catch (Exception ex)
+        {
+            await JS.InvokeVoidAsync("alert", $"تعذر توليد مونتاج الفيديو: {ex.Message}");
+        }
+        finally
+        {
+            _generatingMontage = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task DrawPitchOverlayAsync()
+    {
+        try
+        {
+            var coords = _results.Where(r => r.X != null && r.Y != null).Select(r => new
+            {
+                x = r.X, y = r.Y, endX = r.EndX, endY = r.EndY,
+                color = GetCategoryColor(r.Category),
+                radius = r.Category == "shot" ? 8 : 5
+            }).ToList();
+            
+            await JS.InvokeVoidAsync("PitchOverlay.draw", coords, "queryPitch");
+        }
+        catch { }
+    }
+
+    private void ToggleQualifier(string key, bool on)
+    {
+        if (on) _filter.Qualifiers.Add(key);
+        else _filter.Qualifiers.Remove(key);
+    }
+
+    private async Task ExportCsv()
+    {
+        var csv = new System.Text.StringBuilder();
+        csv.AppendLine("Minute,Second,TeamId,PlayerId,Category,SubType,Outcome,X,Y,EndX,EndY");
+        foreach (var e in _results)
+        {
+            csv.AppendLine($"{e.Minute},{e.Second},{e.TeamId},{e.PlayerId}," +
+                           $"{e.Category},{e.SubType},{e.Outcome},{e.X},{e.Y},{e.EndX},{e.EndY}");
+        }
+        var base64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(csv.ToString()));
+        try
+        {
+            await JS.InvokeVoidAsync("PitchOverlay.downloadDataUri",
+                $"query_results_{DateTime.Now:yyyyMMdd_HHmmss}.csv",
+                $"data:text/csv;base64,{base64}");
+        }
+        catch (Exception ex)
+        {
+            await JS.InvokeVoidAsync("alert", $"خطأ في التصدير: {ex.Message}");
+        }
+    }
+
+    private void JumpTo(Event e) => NavigationManager.NavigateTo(
+        $"/tagger/{MatchId}?frame={e.FrameNumber}&eventId={e.Id}");
+
+    private static string GetCategoryName(string key) =>
+        EventTaxonomy.GetCategory(key)?.Ar ?? key;
+    private static string GetCategoryColor(string key) =>
+        EventTaxonomy.GetCategory(key)?.Color ?? "#666";
+    private static string GetSubTypeName(string cat, string sub) =>
+        EventTaxonomy.GetSubType(cat, sub)?.Ar ?? sub;
+}
+
+<style>
+    .query-page { padding: 16px 20px; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+    .query-layout { display: grid; grid-template-columns: 340px 1fr; gap: 16px; flex: 1; overflow: hidden; }
+    .filters-panel { background: #161b22; padding: 16px; border-radius: 8px; overflow-y: auto; border: 1px solid var(--border-color); }
+    .results-panel { background: #161b22; padding: 16px; border-radius: 8px; overflow-y: auto; border: 1px solid var(--border-color); display: flex; flex-direction: column; }
+    .filter-group { margin-bottom: 10px; }
+    .filter-group label { display: block; font-size: 12px; color: #8b949e; margin-bottom: 4px; font-weight: 600; }
+    .filter-group select, .filter-group input { width: 100%; background: #0d1117; color: #e6edf3;
+        border: 1px solid #30363d; border-radius: 6px; padding: 7px; font-family: inherit; font-size: 13px; }
+    .range-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+    .range-grid label { font-size: 11px; color: #8b949e; display: flex; flex-direction: column; gap: 2px; }
+    .qualifiers-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .checkbox-label { display: flex !important; align-items: center; gap: 6px; font-size: 11px; color: #e6edf3; cursor: pointer; }
+    .run-btn { width: 100%; background: #238636; padding: 10px; margin-top: 14px; font-weight: bold; border-color: #2ea043; }
+    .run-btn:hover:not(:disabled) { background: #2ea043; }
+    .export-btn { width: 100%; background: #1f6feb; padding: 8px; margin-top: 8px; border-color: #388bfd; }
+    .results-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    .summary-badge { background: #21262d; padding: 4px 10px; border-radius: 12px; font-size: 12px; color: #58a6ff; }
+    .map-container { margin-bottom: 14px; background: #0d1117; border-radius: 8px; overflow: hidden; border: 1px solid #30363d; }
+    .results-table { display: flex; flex-direction: column; gap: 4px; overflow-y: auto; flex: 1; }
+    .result-row { display: grid; grid-template-columns: 60px 100px 1fr 120px 80px 60px;
+        gap: 8px; padding: 6px 10px; background: #0d1117; border-radius: 4px;
+        cursor: pointer; font-size: 12px; align-items: center; border: 1px solid transparent; }
+    .result-row:hover { background: #21262d; border-color: #30363d; }
+    .res-time { font-family: monospace; color: #8b949e; }
+    .res-cat { padding: 2px 6px; border-radius: 3px; color: white; text-align: center; font-size: 10px; font-weight: bold; }
+    .res-outcome.successful { color: #3fb950; font-weight: bold; }
+    .res-outcome.failed { color: #f85149; font-weight: bold; }
+    .res-outcome.key { color: #d29922; font-weight: bold; }
+</style>

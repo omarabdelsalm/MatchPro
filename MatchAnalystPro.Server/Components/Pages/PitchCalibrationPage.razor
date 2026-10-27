@@ -1,0 +1,239 @@
+@page "/calibration"
+@page "/calibration/{MatchId:int}"
+@using MatchAnalystPro.Server.Data
+@using MatchAnalystPro.Server.Services
+@using MatchAnalystPro.Server.Models
+@inject AppDbContext Db
+@inject VideoService VideoService
+@inject IJSRuntime JS
+@implements IDisposable
+
+<div style="padding:20px; height:100vh; overflow-y:auto;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
+        <h2 style="margin:0;">📐 معايرة الملعب التفاعلية (Pitch Calibration)</h2>
+        <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-size:12px; color:#8b949e;">المباراة:</span>
+            <select value="@MatchId" @onchange="OnMatchChanged"
+                    style="background:#161b22; border:1px solid #388bfd; color:#58a6ff; font-weight:700; padding:4px 10px; border-radius:6px; font-size:12px; cursor:pointer;">
+                @foreach (var m in _matches)
+                {
+                    <option value="@m.Id">#@m.Id: @(m.HomeTeam?.NameAr ?? "مضيف") ضد @(m.AwayTeam?.NameAr ?? "ضيف")</option>
+                }
+            </select>
+            <a href="/tagger/@MatchId" class="badge badge-info" style="text-decoration:none; padding:6px 12px;">🎬 العودة لشاشة التصنيف</a>
+        </div>
+    </div>
+    <p style="color:#8b949e; font-size:13px; margin-bottom:16px;">
+        انقر على 4 زوايا الملعب داخل الفيديو بالترتيب: <strong>1. أعلى-يسار ➔ 2. أعلى-يمين ➔ 3. أسفل-يمين ➔ 4. أسفل-يسار</strong> ليتم تحويل أي نقرة على الفيديو في شاشة التصنيف إلى موقع حقيقي على الملعب (105×68م).
+    </p>
+
+    <div style="display:grid; grid-template-columns:1fr 320px; gap:16px;">
+        <div style="background:#0d1117; border-radius:8px; padding:8px; border:1px solid var(--border-color);">
+            @if (!string.IsNullOrEmpty(VideoUrl))
+            {
+                <div style="position:relative; width:100%;">
+                    <video id="calVideo" src="@VideoUrl" controls preload="metadata"
+                           style="width:100%; max-height:65vh; border-radius:6px; display:block; background:#000;"></video>
+                    <!-- طبقة شفافة فوق الفيديو لالتقاط نقرات المعايرة ورسم المضلع دون إيقاف الفيديو -->
+                    <canvas id="calOverlay"
+                            style="position:absolute; top:0; left:0; z-index:10; cursor:crosshair;"></canvas>
+                </div>
+            }
+            else
+            {
+                <div style="height:360px; display:flex; flex-direction:column; align-items:center; justify-content:center; border:1px dashed #30363d; border-radius:6px; color:#8b949e; gap:10px;">
+                    <div style="font-size:36px;">📹</div>
+                    <div>لم يتم تحديد ملف فيديو لهذه المباراة</div>
+                    <div style="font-size:11px;">يمكنك ربط الفيديو من صفحة المباريات أو النقر للمحاكاة</div>
+                    <button class="primary" @onclick="SimulateCorners">إضافة 4 زوايا افتراضية للملعب</button>
+                </div>
+            }
+        </div>
+        <div style="background:#161b22; padding:16px; border-radius:8px; border:1px solid var(--border-color);">
+            <h3 style="margin-top:0; font-size:14px; border-bottom:1px solid #30363d; padding-bottom:6px;">النقاط المختارة (@_corners.Count / 4)</h3>
+            @foreach (var (c, i) in _corners.Select((c, i) => (c, i)))
+            {
+                <div style="background:#0d1117; padding:8px 10px; margin-bottom:6px; border-radius:4px; border:1px solid var(--border-color); display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                        <strong style="color:#58a6ff; font-size:12px;">@CornerLabel(i)</strong><br/>
+                        <code style="font-size:11px; color:#8b949e;">X: @c.X.ToString("F0") | Y: @c.Y.ToString("F0")</code>
+                    </div>
+                    <span style="font-size:12px; color:#3fb950;">✓</span>
+                </div>
+            }
+
+            @if (_corners.Count < 4)
+            {
+                <div style="padding:10px; background:rgba(88,166,255,0.1); border:1px dashed #58a6ff; border-radius:4px; font-size:12px; color:#58a6ff; text-align:center;">
+                    بانتظار تحديد: <strong>@CornerLabel(_corners.Count)</strong>
+                </div>
+            }
+
+            @if (_corners.Count == 4)
+            {
+                <button @onclick="SaveCalibration"
+                        style="width:100%; background:#238636; border-color:#2ea043; padding:12px; margin-top:12px; font-weight:bold;">
+                    💾 حفظ المعايرة وتفعيلها
+                </button>
+            }
+            <button @onclick="ResetCorners"
+                    style="width:100%; background:#21262d; padding:8px; margin-top:8px;">
+                🔄 إعادة تعيين النقاط
+            </button>
+            <button @onclick="SimulateCorners"
+                    style="width:100%; background:#1f6feb; padding:8px; margin-top:8px;">
+                ⚡ تعبئة نقاط قياسية لكاميرا البث
+            </button>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public int MatchId { get; set; } = 1;
+    private Match? _match;
+    private List<Match> _matches = new();
+    private string VideoUrl = "";
+    private List<(double X, double Y)> _corners = new();
+    private DotNetObjectReference<PitchCalibrationPage>? _calRef;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_match == null || _match.Id != MatchId)
+        {
+            await LoadDataAsync();
+        }
+    }
+
+    private async Task OnMatchChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var id) && id != MatchId)
+        {
+            MatchId = id;
+            await LoadDataAsync();
+        }
+    }
+
+    private async Task LoadDataAsync()
+    {
+        _matches = await Db.Matches.Include(m => m.HomeTeam).Include(m => m.AwayTeam).OrderByDescending(m => m.Date).ToListAsync();
+        _match = _matches.FirstOrDefault(m => m.Id == MatchId) ?? _matches.FirstOrDefault();
+        if (_match != null)
+        {
+            MatchId = _match.Id;
+            if (!string.IsNullOrEmpty(_match.VideoPath) && File.Exists(_match.VideoPath))
+                VideoUrl = VideoService.ResolvePlayableVideoUrl(_match);
+            else
+                VideoUrl = "";
+
+            var existing = await Db.PitchCalibrations.FirstOrDefaultAsync(c => c.MatchId == MatchId);
+            if (existing != null)
+            {
+                _corners = new List<(double X, double Y)>
+                {
+                    (existing.TlVideoX, existing.TlVideoY),
+                    (existing.TrVideoX, existing.TrVideoY),
+                    (existing.BrVideoX, existing.BrVideoY),
+                    (existing.BlVideoX, existing.BlVideoY)
+                };
+            }
+            else
+            {
+                _corners.Clear();
+            }
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        try
+        {
+            _calRef ??= DotNetObjectReference.Create(this);
+            if (!string.IsNullOrEmpty(VideoUrl))
+            {
+                await JS.InvokeVoidAsync("PitchOverlay.attachVideoCalibration", "calVideo", _calRef, "calOverlay");
+                await DrawCalibrationOverlayAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[PitchCalibrationPage] attach error: {ex.Message}");
+        }
+    }
+
+    private async Task DrawCalibrationOverlayAsync()
+    {
+        if (string.IsNullOrEmpty(VideoUrl)) return;
+        var pts = _corners.Select(c => new { x = c.X, y = c.Y }).ToList();
+        await JS.InvokeVoidAsync("PitchOverlay.drawCalibrationPoints", "calVideo", "calOverlay", pts);
+    }
+
+    [JSInvokable]
+    public async Task OnVideoClick(double x, double y)
+    {
+        if (_corners.Count >= 4) return;
+        _corners.Add((x, y));
+        await DrawCalibrationOverlayAsync();
+        StateHasChanged();
+    }
+
+    private async Task SimulateCorners()
+    {
+        _corners = new List<(double X, double Y)>
+        {
+            (180, 120),
+            (1100, 120),
+            (1240, 650),
+            (40, 650)
+        };
+        await DrawCalibrationOverlayAsync();
+        StateHasChanged();
+    }
+
+    private async Task ResetCorners()
+    {
+        _corners.Clear();
+        await DrawCalibrationOverlayAsync();
+        StateHasChanged();
+    }
+
+    private async Task SaveCalibration()
+    {
+        if (_match == null || _corners.Count != 4) return;
+        
+        var existing = await Db.PitchCalibrations.FirstOrDefaultAsync(c => c.MatchId == MatchId);
+        if (existing == null)
+        {
+            existing = new PitchCalibration { MatchId = MatchId };
+            Db.PitchCalibrations.Add(existing);
+        }
+
+        existing.TlVideoX = _corners[0].X; existing.TlVideoY = _corners[0].Y;
+        existing.TrVideoX = _corners[1].X; existing.TrVideoY = _corners[1].Y;
+        existing.BrVideoX = _corners[2].X; existing.BrVideoY = _corners[2].Y;
+        existing.BlVideoX = _corners[3].X; existing.BlVideoY = _corners[3].Y;
+        existing.PitchLengthM = 105.0;
+        existing.PitchWidthM = 68.0;
+
+        await Db.SaveChangesAsync();
+        await JS.InvokeVoidAsync("alert", "✅ تم حفظ المعايرة بنجاح! يمكنك الآن النقر على الفيديو في شاشة التصنيف لتحديد مواقع الأحداث تلقائياً.");
+    }
+
+    private string CornerLabel(int i) => i switch
+    {
+        0 => "1. أعلى-يسار (Top-Left)",
+        1 => "2. أعلى-يمين (Top-Right)",
+        2 => "3. أسفل-يمين (Bottom-Right)",
+        3 => "4. أسفل-يسار (Bottom-Left)",
+        _ => ""
+    };
+
+    public void Dispose()
+    {
+        _calRef?.Dispose();
+    }
+}
